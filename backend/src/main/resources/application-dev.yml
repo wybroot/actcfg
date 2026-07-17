@@ -1,0 +1,8 @@
+app:
+  storage:
+    type: local
+    base-path: ./data/storage
+  package-build:
+    immutable: true
+  agent:
+    offline-first: true
