@@ -10,6 +10,8 @@ public record ResourceEntity(
         ResourceSourceType sourceType,
         String description,
         String status,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt,
+        boolean deleted
 ) {
 }

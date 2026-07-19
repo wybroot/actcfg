@@ -16,7 +16,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ApiResponse<Void> handleValidationException(MethodArgumentNotValidException exception) {
-        return ApiResponse.error(ErrorCode.PARAM_ERROR.code(), ErrorCode.PARAM_ERROR.message());
+        String message = exception.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(error -> error.getDefaultMessage())
+                .orElse(ErrorCode.PARAM_ERROR.message());
+        return ApiResponse.error(ErrorCode.PARAM_ERROR.code(), message);
     }
 
     @ExceptionHandler(Exception.class)

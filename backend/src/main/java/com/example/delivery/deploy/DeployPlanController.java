@@ -1,9 +1,12 @@
 package com.example.delivery.deploy;
 
 import com.example.delivery.common.api.ApiResponse;
+import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -21,13 +24,44 @@ public class DeployPlanController {
         return ApiResponse.ok(deployPlanService.listPlans());
     }
 
+    @PostMapping
+    public ApiResponse<DeployPlanEntity> createPlan(@Valid @RequestBody CreateDeployPlanRequest request) {
+        return ApiResponse.ok(deployPlanService.createPlan(request));
+    }
+
+    @GetMapping("/{id}")
+    public ApiResponse<DeployPlanEntity> getPlan(@PathVariable Long id) {
+        return ApiResponse.ok(deployPlanService.getPlan(id));
+    }
+
     @GetMapping("/{id}/versions")
     public ApiResponse<List<DeployPlanVersionEntity>> listVersions(@PathVariable Long id) {
         return ApiResponse.ok(deployPlanService.listVersions(id));
     }
 
+    @PostMapping("/{id}/versions")
+    public ApiResponse<DeployPlanVersionEntity> createVersion(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateDeployPlanVersionRequest request
+    ) {
+        return ApiResponse.ok(deployPlanService.createVersion(id, request));
+    }
+
+    @PostMapping("/versions/{versionId}/publish")
+    public ApiResponse<DeployPlanVersionEntity> publishVersion(@PathVariable Long versionId) {
+        return ApiResponse.ok(deployPlanService.publishVersion(versionId));
+    }
+
     @GetMapping("/versions/{versionId}/components")
     public ApiResponse<List<DeployComponentEntity>> listComponents(@PathVariable Long versionId) {
         return ApiResponse.ok(deployPlanService.listComponents(versionId));
+    }
+
+    @PostMapping("/versions/{versionId}/components")
+    public ApiResponse<DeployComponentEntity> createComponent(
+            @PathVariable Long versionId,
+            @Valid @RequestBody CreateDeployComponentRequest request
+    ) {
+        return ApiResponse.ok(deployPlanService.createComponent(versionId, request));
     }
 }
