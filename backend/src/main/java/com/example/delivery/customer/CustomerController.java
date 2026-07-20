@@ -21,6 +21,11 @@ public class CustomerController {
         return ApiResponse.ok(customerService.listCustomers());
     }
 
+    @GetMapping("/{id}")
+    public ApiResponse<CustomerEntity> getCustomer(@PathVariable Long id) {
+        return ApiResponse.ok(customerService.getCustomer(id));
+    }
+
     @GetMapping("/{id}/environments")
     public ApiResponse<List<CustomerEnvironmentEntity>> listEnvironments(@PathVariable Long id) {
         return ApiResponse.ok(customerService.listEnvironments(id));
