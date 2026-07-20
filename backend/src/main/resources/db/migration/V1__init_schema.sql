@@ -112,7 +112,7 @@ CREATE TABLE env_variable (
   variable_key VARCHAR(128) NOT NULL,
   variable_value TEXT NULL,
   masked_value VARCHAR(256) NULL,
-  sensitive TINYINT NOT NULL DEFAULT 0,
+  is_sensitive TINYINT NOT NULL DEFAULT 0,
   UNIQUE KEY uk_env_variable (environment_id, variable_key)
 );
 

@@ -91,6 +91,132 @@ export type DeployComponent = {
   healthCheck?: string
 }
 
+export type CustomerEnvironment = {
+  id: number
+  customerId: number
+  environmentName: string
+  environmentType: string
+  deployPlanVersionId?: number
+  status: string
+}
+
+export type PackageBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
+export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'RETRYING' | 'CANCELED'
+
+export type PackageBuild = {
+  id: number
+  packageCode: string
+  customerId: number
+  environmentId: number
+  deployPlanVersionId: number
+  packageVersion: string
+  buildStatus: PackageBuildStatus
+  immutable: boolean
+  filePath: string
+  checksum: string
+  createdAt: string
+}
+
+export type PackageManifest = {
+  packageBuildId: number
+  manifestJson: string
+  checksum: string
+}
+
+export type PackageDownloadInfo = {
+  packageBuildId: number
+  packageCode: string
+  filePath: string
+  checksum: string
+  manifestJson: string
+}
+
+export type CreatePackageBuildPayload = {
+  customerId: number
+  environmentId: number
+  deployPlanVersionId: number
+  packageVersion: string
+  remark?: string
+}
+
+export type AgentTask = {
+  id: number
+  taskCode: string
+  packageBuildId: number
+  taskType: string
+  taskStatus: AgentTaskStatus
+  startedAt?: string
+  finishedAt?: string
+  resultSummary?: string
+}
+
+export type AgentExecutionLog = {
+  id: number
+  taskId: number
+  stepCode: string
+  stepName: string
+  stepStatus: AgentTaskStatus
+  logLevel: string
+  logContent?: string
+  retryCount: number
+}
+
+export type CreateAgentTaskPayload = {
+  packageBuildId: number
+  taskType: string
+}
+
+export type ReportAgentStatusPayload = {
+  taskStatus: AgentTaskStatus
+  resultSummary?: string
+  stepCode: string
+  stepName: string
+  logLevel?: string
+  logContent?: string
+}
+
+export type AgentExecutionReport = {
+  id: number
+  reportCode: string
+  taskId: number
+  packageBuildId: number
+  customerId: number
+  environmentId: number
+  executionHost?: string
+  executionStatus: AgentTaskStatus
+  startedAt?: string
+  finishedAt?: string
+  failedStep?: string
+  failureReason?: string
+  healthCheckResult?: string
+  reportContent?: string
+  importedAt: string
+}
+
+export type ImportAgentReportPayload = {
+  taskId: number
+  executionHost?: string
+  failedStep?: string
+  failureReason?: string
+  healthCheckResult?: string
+  reportContent?: string
+}
+
+export type AgentRetryRecordView = {
+  taskId: number
+  taskCode?: string
+  packageBuildId?: number
+  failedStep?: string
+  failureReason?: string
+  retryCount: number
+  lastRetryAt?: string
+  finalStatus?: AgentTaskStatus
+}
+
+export type BindDeployPlanPayload = {
+  deployPlanVersionId: number
+}
+
 export type CreateDeployPlanPayload = {
   planCode: string
   planName: string
@@ -174,7 +300,28 @@ export const api = {
   createDeployComponent: (versionId: number, payload: CreateDeployComponentPayload) =>
     post<DeployComponent>(`/api/deploy/plans/versions/${versionId}/components`, payload),
   customers: () => get('/api/customers'),
-  packages: () => get('/api/packages'),
-  offlineTasks: () => get('/api/agents/offline/tasks'),
+  customerEnvironments: (customerId: number) => get<CustomerEnvironment[]>(`/api/customers/${customerId}/environments`),
+  environment: (id: number) => get<CustomerEnvironment>(`/api/environments/${id}`),
+  bindEnvironmentDeployPlan: (environmentId: number, payload: BindDeployPlanPayload) =>
+    put<CustomerEnvironment>(`/api/environments/${environmentId}/bind-plan`, payload),
+  packages: () => get<PackageBuild[]>('/api/packages'),
+  packageBuild: (id: number) => get<PackageBuild>(`/api/packages/${id}`),
+  createPackageBuild: (payload: CreatePackageBuildPayload) => post<PackageBuild>('/api/packages/build', payload),
+  packageManifest: (id: number) => get<PackageManifest>(`/api/packages/${id}/manifest`),
+  packageStatus: (id: number) => get<PackageBuildStatus>(`/api/packages/${id}/status`),
+  packageDownloadInfo: (id: number) => get<PackageDownloadInfo>(`/api/packages/${id}/download`),
+  deletePackageBuild: (id: number) => del<void>(`/api/packages/${id}`),
+  offlineTasks: () => get<AgentTask[]>('/api/agents/offline/tasks'),
+  offlineTask: (id: number) => get<AgentTask>(`/api/agents/offline/tasks/${id}`),
+  createOfflineTask: (payload: CreateAgentTaskPayload) => post<AgentTask>('/api/agents/offline/tasks', payload),
+  cancelOfflineTask: (id: number) => post<AgentTask>(`/api/agents/offline/tasks/${id}/cancel`, {}),
+  reportOfflineTaskStatus: (id: number, payload: ReportAgentStatusPayload) =>
+    post<AgentTask>(`/api/agents/offline/tasks/${id}/status`, payload),
+  offlineTaskLogs: (id: number) => get<AgentExecutionLog[]>(`/api/agents/offline/tasks/${id}/logs`),
+  retryOfflineTask: (id: number) => post<AgentTask>(`/api/agents/offline/tasks/${id}/retry`, {}),
+  agentRetryRecords: () => get<AgentRetryRecordView[]>('/api/agents/offline/retry-records'),
+  importAgentReport: (payload: ImportAgentReportPayload) => post<AgentExecutionReport>('/api/agents/offline/reports/import', payload),
+  agentReports: () => get<AgentExecutionReport[]>('/api/agents/offline/reports'),
+  agentReport: (taskId: number) => get<AgentExecutionReport>(`/api/agents/offline/tasks/${taskId}/report`),
   operationLogs: () => get('/api/audit/operation-logs')
 }

@@ -7,20 +7,26 @@ import {
   type CreateDeployPlanVersionPayload,
   type DeployComponent,
   type DeployPlan,
-  type DeployPlanVersion
+  type DeployPlanVersion,
+  type Resource,
+  type ResourceVersion
 } from '../../api/http'
 
 const plans = ref<DeployPlan[]>([])
 const versions = ref<DeployPlanVersion[]>([])
 const components = ref<DeployComponent[]>([])
+const resources = ref<Resource[]>([])
+const resourceVersions = ref<ResourceVersion[]>([])
 const selectedPlanId = ref<number>()
 const selectedVersionId = ref<number>()
+const selectedResourceId = ref<number>()
 const loading = ref(false)
 const versionLoading = ref(false)
 const componentLoading = ref(false)
 const error = ref('')
 const versionError = ref('')
 const componentError = ref('')
+const resourceError = ref('')
 const planFormVisible = ref(false)
 const versionFormVisible = ref(false)
 const componentFormVisible = ref(false)
@@ -47,8 +53,22 @@ const componentForm = reactive<CreateDeployComponentPayload>({
 const selectedPlan = computed(() => plans.value.find((item) => item.id === selectedPlanId.value))
 const selectedVersion = computed(() => versions.value.find((item) => item.id === selectedVersionId.value))
 const selectedVersionEditable = computed(() => selectedVersion.value?.editable ?? false)
+const enabledResources = computed(() => resources.value.filter((item) => item.status === 'ENABLED'))
+const enabledResourceVersions = computed(() => resourceVersions.value.filter((item) => item.status === 'ENABLED'))
 
-onMounted(loadPlans)
+onMounted(() => {
+  void loadPlans()
+  void loadResources()
+})
+
+async function loadResources() {
+  resourceError.value = ''
+  try {
+    resources.value = await api.resources()
+  } catch (err) {
+    resourceError.value = err instanceof Error ? err.message : '资源列表加载失败'
+  }
+}
 
 async function loadPlans() {
   loading.value = true
@@ -106,6 +126,20 @@ async function loadComponents(versionId: number) {
   }
 }
 
+async function selectResource() {
+  resourceVersions.value = []
+  componentForm.resourceVersionId = 0
+  if (!selectedResourceId.value) {
+    return
+  }
+  componentError.value = ''
+  try {
+    resourceVersions.value = await api.resourceVersions(selectedResourceId.value)
+  } catch (err) {
+    componentError.value = err instanceof Error ? err.message : '资源版本加载失败'
+  }
+}
+
 function showPlanForm() {
   Object.assign(planForm, { planCode: '', planName: '', description: '' })
   planFormVisible.value = true
@@ -117,10 +151,12 @@ function showVersionForm() {
 }
 
 function showComponentForm() {
+  selectedResourceId.value = undefined
+  resourceVersions.value = []
   Object.assign(componentForm, {
     componentName: '',
     componentType: 'APP',
-    resourceVersionId: 1,
+    resourceVersionId: 0,
     deployOrder: 1,
     configTemplate: '',
     healthCheck: ''
@@ -169,6 +205,10 @@ async function submitComponent() {
   if (!selectedVersion.value) {
     return
   }
+  if (!componentForm.resourceVersionId) {
+    componentError.value = '请选择资源版本'
+    return
+  }
   componentError.value = ''
   try {
     await api.createDeployComponent(selectedVersion.value.id, componentForm)
@@ -202,6 +242,7 @@ function formatDate(value?: string) {
     </div>
 
     <p v-if="error" class="error-message">{{ error }}</p>
+    <p v-if="resourceError" class="error-message">{{ resourceError }}</p>
 
     <form v-if="planFormVisible" class="panel form-grid" @submit.prevent="submitPlan">
       <label class="field">
@@ -322,8 +363,23 @@ function formatDate(value?: string) {
             <input v-model.trim="componentForm.componentType" maxlength="32" required placeholder="APP" />
           </label>
           <label class="field">
-            <span>资源版本 ID</span>
-            <input v-model.number="componentForm.resourceVersionId" type="number" min="1" required />
+            <span>资源</span>
+            <select v-model.number="selectedResourceId" required @change="selectResource">
+              <option :value="undefined" disabled>请选择资源</option>
+              <option v-for="resource in enabledResources" :key="resource.id" :value="resource.id">
+                {{ resource.resourceName }} / {{ resource.resourceCode }} / {{ resource.resourceType }}
+              </option>
+            </select>
+          </label>
+          <label class="field">
+            <span>资源版本</span>
+            <select v-model.number="componentForm.resourceVersionId" required :disabled="!selectedResourceId">
+              <option :value="0" disabled>请选择资源版本</option>
+              <option v-for="resourceVersion in enabledResourceVersions" :key="resourceVersion.id" :value="resourceVersion.id">
+                {{ resourceVersion.version }} / {{ resourceVersion.status }}
+              </option>
+            </select>
+            <small v-if="selectedResourceId && enabledResourceVersions.length === 0" class="muted">该资源暂无可用版本</small>
           </label>
           <label class="field">
             <span>部署顺序</span>
