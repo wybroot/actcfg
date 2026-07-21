@@ -431,3 +431,43 @@ MinIO 冒烟通过：
 2. 被拒绝的写操作**未进审计**（`@PreAuthorize` 拦截器先于 `@Around` 切面执行，方法未到达）。→ 给 `AuditLogAspect` 加 `@Order(100)`（低于 Security 拦截器 400），切面包住权限校验，拒绝时记 **FAILED**。实测 auditor 建客户返回 403 且操作日志出现 `auditor/CUSTOMER/CREATE/FAILED`。
 
 修复后 `mvn test` **49/49** 仍绿，提交 `acd2eb2`（并修正 `.gitignore`，排除运行时 `data/storage/` 产物）。环境提示：系统 PATH 的 `java` 是 1.8，需用 `JAVA_HOME` 的 JDK21 启动 jar（Maven 已用 21）。
+
+### 健壮性修复 + P3 后置能力（承接通し测试）
+
+通し测试后先补一个健壮性问题，再推进 doc/10 里列为"后续增量"的 P3 能力。全部提交不带共同作者。
+
+- **畸形请求体返回 400**（`ff7d651`）：非法 JSON body 之前被吞成 500，改为返回 **400**，语义正确。
+- **敏感变量读取脱敏**（`d6128d1`）：`listVariables` 对外读取时清空敏感变量明文、只保留掩码；新增内部 `listVariablesRaw` 供克隆/建包使用。
+- **需求5 部署包生命周期 + 清理**（`f42f2cd`，`V8__package_lifecycle.sql`）：状态机 `ACTIVE→ARCHIVED→DEPRECATED→PURGED` + 下载计数 + 保留期；超管清理接口。前端部署包页展示生命周期状态与操作。
+- **成功率统计 + 失败归因**（`fd8edfd`）：`GET /api/stats/deploy` 基于已结束任务算成功率，失败步骤/原因 Top5 归因（取自执行报告）；Dashboard 展示。
+- **敏感配置加密 + 密钥轮换**（`fd8edfd`）：新包 `security.crypto`——`SecretCipher`（AES-256-GCM，密文自带密钥版本 `enc:keyId:iv:ct`，支持多密钥并存与轮换，历史明文向后兼容）+ `EncryptionProperties`。敏感变量入库前加密、内部读取解密、对外仍脱敏；`POST /api/environments/variables/rotate-secrets`（超管）重加密全部敏感变量。未配密钥时退化为进程内临时密钥（重启失效，仅测试用）。
+- **实时日志（SSE）**（`9af8086`）：`AgentLogStreamService` 按任务 ID 维护 SSE 订阅者，`reportStatus` 时广播、终态自动关闭连接；`GET /api/agents/offline/tasks/{taskId}/logs/stream`（text/event-stream）。`JwtAuthFilter` 支持 `token` 查询参数（EventSource 无法设置 Authorization 头）。前端 `OfflineAgentView` 加"实时日志"开关 + 活跃指示灯。
+
+### 镜像坐标接入离线部署链路（`fb7a5f3`）
+
+确认并修复一处真实缺口：Harbor 同步登记的镜像坐标（`imageRepository:imageTag`）之前没接到 agent 执行脚本——镜像组件在现场既无 tar 也无坐标可拉，这条路是断的。
+
+- `resolveComponentSources` 为镜像组件填充 `repo:tag`；`LOAD_IMAGE` 步骤 target 用完整坐标（含 registry/project），不再被 `fileName` 截断。
+- agent `load_image` 改为：包内有 tar → 离线 `docker load`；否则按坐标 `docker pull`（拉取失败即失败）。
+- 取向明确：**平台只同步元数据、不搬运镜像层**，实际镜像现场从源仓库/代理拉取，不做笨重的 Harbor/Nexus 替代。
+
+### 源仓库前端可管理（`508a296`，`V9__source_repository.sql`）
+
+按需求把"源仓库"做成前端可增删改的实体（先支持 HARBOR 类型），支持多源仓库并在同步镜像时选择。
+
+- 新包 `repository.source`：实体/枚举/JDBC 仓库/服务/控制器，CRUD + **测试连接**（拿解密凭证 ping Harbor `/api/v2.0/health`）。
+- 密码复用 `SecretCipher` 加密入库，list/get 脱敏为掩码，同步时解密取凭证；停用的源仓库拒绝取凭证；编辑时密码留空保留原值。
+- `HarborSyncService` 改造：请求带 `sourceRepositoryId` 用该源仓库地址/凭证，为空回退全局 `app.harbor`（**向后兼容**，老流程不破）。
+- 前端：源仓库管理页 `/repository/sources` + 路由/导航；资源页 Harbor 同步 Tab 加源仓库下拉。
+
+### 验证情况
+
+- 后端 `mvn test` 全绿：从 49 增至 **74**（新增畸形请求体、生命周期、deployStats、SecretCipher×5、镜像坐标、AgentLogStream×3、SourceRepository×7 等）。
+- 前端 `npm run build` 通过，**61** 模块。
+- 迁移新增 `V8`（部署包生命周期）、`V9`（源仓库表）。`application-local.yml` 补 `app.encryption` 密钥与 `app.harbor` 占位（该文件 gitignore，含真实凭证不入库）。
+
+### 说明 / 下一步
+
+- **doc/10 五大阶段 + 在线 Agent 已收官**，本轮完成的是原列为"后续增量"的 P3 能力（生命周期、成功率归因、敏感加密、SSE 实时日志、源仓库前端管理）。
+- 仍可做的增量：真实 agent 客户端二进制、自动回滚、更细数据权限、审计查询筛选、registry 代理形态（平台统一代理拉取再回源）。
+- 尚未做真实业务联调（连真实 MySQL/Redis/MinIO/Harbor 走通），下次可起 local profile 从页面配真实源仓库测连接 + 同步一个真实镜像。所有提交不带共同作者。
