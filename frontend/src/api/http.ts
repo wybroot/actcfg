@@ -160,6 +160,15 @@ export type SnapshotDetail = { snapshot: Snapshot; components: SnapshotComponent
 
 export type OperationLog = { id: number; operatorName: string; module: string; action: string; result: string; createdAt: string }
 export type DownloadLog  = { id: number; downloaderName: string; targetType: string; targetName: string; ipAddress: string; createdAt: string }
+export type LoginLog     = { id: number; username: string; loginResult: string; ipAddress: string; createdAt: string }
+
+export type StatsOverview = {
+  customerCount: number
+  resourceCount: number
+  packageCount: number
+  agentTaskCount: number
+  taskStatusCounts: Record<string, number>
+}
 
 export type PackageBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
 export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'RETRYING' | 'CANCELED'
@@ -397,6 +406,10 @@ export const api = {
   // ---- 审计日志 ----
   operationLogs: () => get<OperationLog[]>('/api/audit/operation-logs'),
   downloadLogs:  () => get<DownloadLog[]>('/api/audit/download-logs'),
+  loginLogs:     () => get<LoginLog[]>('/api/audit/login-logs'),
+
+  // ---- 统计概览 ----
+  statsOverview: () => get<StatsOverview>('/api/stats/overview'),
 
   // ---- 配置快照 ----
   environmentSnapshot: (environmentId: number) => get<SnapshotDetail>(`/api/environments/${environmentId}/snapshot`),

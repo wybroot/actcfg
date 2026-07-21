@@ -1,5 +1,6 @@
 package com.example.delivery.packagebuild;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.audit.AuditService;
 import com.example.delivery.common.api.ApiResponse;
 import com.example.delivery.security.CurrentUser;
@@ -35,6 +36,7 @@ public class PackageBuildController {
 
     @PostMapping("/build")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "PACKAGE", action = "BUILD")
     public ApiResponse<PackageBuildEntity> createPackage(@Valid @RequestBody CreatePackageBuildRequest request) {
         return ApiResponse.ok(packageBuildService.createPackage(request));
     }
@@ -78,6 +80,7 @@ public class PackageBuildController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "PACKAGE", action = "DELETE")
     public ApiResponse<Void> deletePackage(@PathVariable Long id) {
         packageBuildService.deletePackage(id);
         return ApiResponse.ok();

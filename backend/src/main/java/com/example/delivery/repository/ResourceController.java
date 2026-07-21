@@ -1,5 +1,6 @@
 package com.example.delivery.repository;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import com.example.delivery.repository.harbor.HarborSyncRequest;
 import com.example.delivery.repository.harbor.HarborSyncService;
@@ -37,6 +38,7 @@ public class ResourceController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "CREATE")
     public ApiResponse<ResourceEntity> createResource(@Valid @RequestBody CreateResourceRequest request) {
         return ApiResponse.ok(resourceService.createResource(request));
     }
@@ -48,12 +50,14 @@ public class ResourceController {
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "UPDATE")
     public ApiResponse<ResourceEntity> updateResource(@PathVariable Long id, @Valid @RequestBody UpdateResourceRequest request) {
         return ApiResponse.ok(resourceService.updateResource(id, request));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "DELETE")
     public ApiResponse<Void> deleteResource(@PathVariable Long id) {
         resourceService.deleteResource(id);
         return ApiResponse.ok();
@@ -66,6 +70,7 @@ public class ResourceController {
 
     @PostMapping("/{id}/versions")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "CREATE_VERSION")
     public ApiResponse<ResourceVersionEntity> createVersion(
             @PathVariable Long id,
             @Valid @RequestBody CreateResourceVersionRequest request
@@ -75,6 +80,7 @@ public class ResourceController {
 
     @PostMapping(value = "/{id}/versions/upload", consumes = "multipart/form-data")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "UPLOAD_VERSION")
     public ApiResponse<ResourceVersionEntity> uploadVersion(
             @PathVariable Long id,
             @RequestParam("version") String version,
@@ -89,6 +95,7 @@ public class ResourceController {
 
     @PostMapping("/{id}/versions/harbor-sync")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "RESOURCE", action = "HARBOR_SYNC")
     public ApiResponse<ResourceVersionEntity> harborSync(
             @PathVariable Long id,
             @Valid @RequestBody HarborSyncRequest request

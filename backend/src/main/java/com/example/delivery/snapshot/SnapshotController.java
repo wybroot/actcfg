@@ -1,5 +1,6 @@
 package com.example.delivery.snapshot;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -32,6 +33,7 @@ public class SnapshotController {
     /** 编辑快照组件的配置模板（与源方案解耦）。 */
     @PutMapping("/snapshots/{snapshotId}/components/{componentId}/config")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "SNAPSHOT", action = "UPDATE_CONFIG")
     public ApiResponse<SnapshotComponentEntity> updateComponentConfig(
             @PathVariable Long snapshotId,
             @PathVariable Long componentId,

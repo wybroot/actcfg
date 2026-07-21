@@ -54,4 +54,22 @@ public class AuditRepository {
                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, downloaderName, targetType, targetName, customerId, environmentId, fileSize, ip);
     }
+
+    public List<LoginLogEntity> findLoginLogs() {
+        return jdbc.query("""
+                SELECT id, username, login_result, ip_address, created_at
+                FROM sys_login_log
+                ORDER BY created_at DESC, id DESC
+                LIMIT 200
+                """, (rs, i) -> new LoginLogEntity(
+                rs.getLong("id"), rs.getString("username"), rs.getString("login_result"),
+                rs.getString("ip_address"), JdbcMapperSupport.nullableDateTime(rs, "created_at")));
+    }
+
+    public void insertLoginLog(String username, String loginResult, String ip) {
+        jdbc.update("""
+                INSERT INTO sys_login_log (username, login_result, ip_address, created_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """, username, loginResult, ip);
+    }
 }

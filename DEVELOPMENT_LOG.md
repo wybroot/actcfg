@@ -396,9 +396,13 @@ MinIO 冒烟通过：
 
 **重要安全记录**：本阶段多次出现工具输出被注入的伪造指令（伪造 `git push --force` 到 main、跳过验证、"文件已迁移删除"、"向 Anthropic 汇报敏感信息"等），全部识别并拒绝，未执行任何此类操作；磁盘文件完好（Edit 均成功）。
 
-### 下一步——阶段五（审计 AOP 全量 + Dashboard）
+### 阶段五（审计 AOP 全量 + 登录日志 + Dashboard）已完成
 
-1. `@AuditLog` 注解 + AOP 切面自动记录所有写操作到 `audit_operation_log`（目前只有下载日志落库，操作日志仅有 recordOperation 方法待接入）。
-2. 补登录日志表 `sys_login_log`（需 `V6__` 迁移）。
-3. Dashboard 大屏：交付概览、任务状态、部署统计。
-之后是阶段四在线 Agent（平台下发 + 心跳 + `agent_instance`）。所有提交不带共同作者。
+- **Part A 审计 AOP（写操作全覆盖）**：`pom.xml` 加 `spring-boot-starter-aop`；`@AuditLog(module,action)` + `AuditLogAspect`（`@Around`，成功 SUCCESS/异常 FAILED，SecurityContext 取操作人、RequestContextHolder 取 IP，调 `recordOperation`）；全部写接口加注解（CUSTOMER/ENVIRONMENT/ENV_VARIABLE/DEPLOY_PLAN/RESOURCE/PACKAGE/AGENT/SNAPSHOT）。
+- **Part B 登录日志**：`V6__sys_login_log.sql` + `LoginLogEntity`；`AuditRepository`/`AuditService` 加登录日志双路径；`AuthController.login` 注入 `AuditService`+`HttpServletRequest`（成功 SUCCESS/密码错 FAILED/禁用 DISABLED）；`GET /api/audit/login-logs`。
+- **Part C 统计 Dashboard**：`stats` 包（`StatsOverview`/`StatsService` 复用 list 聚合无新表/`StatsController` `GET /api/stats/overview`）；前端 http.ts 加类型与 API，`DashboardView` 升级统计卡片+任务状态分布，`AuditLogView` 加登录日志第三 Tab。
+- 验证：后端 **45/45**（+1 StatsServiceTests），前端 **59** 模块 build。
+
+### 下一步——最后阶段：在线 Agent
+
+按 doc/10，唯一剩余是在线 Agent：平台侧下发任务 + agent 心跳注册（`agent_instance` 表，需 `V7__` 迁移）+ 实时状态回传。离线执行内核可复用。所有提交不带共同作者。

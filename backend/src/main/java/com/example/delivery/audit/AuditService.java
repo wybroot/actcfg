@@ -17,8 +17,10 @@ public class AuditService {
     private final AuditRepository auditRepository;
     private final AtomicLong opSeq = new AtomicLong(1);
     private final AtomicLong dlSeq = new AtomicLong(1);
+    private final AtomicLong loginSeq = new AtomicLong(1);
     private final ConcurrentLinkedDeque<OperationLogEntity> operationLogs = new ConcurrentLinkedDeque<>();
     private final ConcurrentLinkedDeque<DownloadLogEntity> downloadLogs = new ConcurrentLinkedDeque<>();
+    private final ConcurrentLinkedDeque<LoginLogEntity> loginLogs = new ConcurrentLinkedDeque<>();
 
     @Autowired
     public AuditService(ObjectProvider<AuditRepository> auditRepositoryProvider) {
@@ -66,5 +68,21 @@ public class AuditService {
         }
         downloadLogs.addFirst(new DownloadLogEntity(
                 dlSeq.getAndIncrement(), downloaderName, targetType, targetName, ip, LocalDateTime.now()));
+    }
+
+    public List<LoginLogEntity> listLoginLogs() {
+        if (useJdbc()) {
+            return auditRepository.findLoginLogs();
+        }
+        return loginLogs.stream().toList();
+    }
+
+    public void recordLogin(String username, String loginResult, String ip) {
+        if (useJdbc()) {
+            auditRepository.insertLoginLog(username, loginResult, ip);
+            return;
+        }
+        loginLogs.addFirst(new LoginLogEntity(
+                loginSeq.getAndIncrement(), username, loginResult, ip, LocalDateTime.now()));
     }
 }

@@ -5,6 +5,7 @@
       <div class="tabs">
         <button :class="['tab', { active: tab === 'operation' }]" @click="tab = 'operation'">操作日志</button>
         <button :class="['tab', { active: tab === 'download' }]" @click="tab = 'download'">下载日志</button>
+        <button :class="['tab', { active: tab === 'login' }]" @click="tab = 'login'">登录日志</button>
       </div>
     </div>
 
@@ -30,7 +31,7 @@
     </table>
 
     <!-- 下载日志 -->
-    <table v-else class="data-table">
+    <table v-else-if="tab === 'download'" class="data-table">
       <thead>
         <tr><th>ID</th><th>下载人</th><th>目标类型</th><th>目标</th><th>IP</th><th>时间</th></tr>
       </thead>
@@ -46,16 +47,34 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- 登录日志 -->
+    <table v-else class="data-table">
+      <thead>
+        <tr><th>ID</th><th>用户名</th><th>结果</th><th>IP</th><th>时间</th></tr>
+      </thead>
+      <tbody>
+        <tr v-if="loginLogs.length === 0"><td colspan="5" class="empty">暂无登录日志</td></tr>
+        <tr v-for="log in loginLogs" :key="log.id">
+          <td>{{ log.id }}</td>
+          <td>{{ log.username }}</td>
+          <td><span :class="log.loginResult === 'SUCCESS' ? 'badge-ok' : 'badge-off'">{{ log.loginResult }}</span></td>
+          <td>{{ log.ipAddress }}</td>
+          <td>{{ formatDate(log.createdAt) }}</td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { api, type OperationLog, type DownloadLog } from '../../api/http'
+import { api, type OperationLog, type DownloadLog, type LoginLog } from '../../api/http'
 
-const tab = ref<'operation' | 'download'>('operation')
+const tab = ref<'operation' | 'download' | 'login'>('operation')
 const operationLogs = ref<OperationLog[]>([])
 const downloadLogs = ref<DownloadLog[]>([])
+const loginLogs = ref<LoginLog[]>([])
 const loading = ref(false)
 const error = ref('')
 
@@ -64,8 +83,10 @@ async function load() {
   try {
     if (tab.value === 'operation') {
       operationLogs.value = await api.operationLogs()
-    } else {
+    } else if (tab.value === 'download') {
       downloadLogs.value = await api.downloadLogs()
+    } else {
+      loginLogs.value = await api.loginLogs()
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载失败'

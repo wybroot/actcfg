@@ -1,5 +1,6 @@
 package com.example.delivery.agent;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -27,6 +28,7 @@ public class AgentController {
 
     @PostMapping("/tasks")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
+    @AuditLog(module = "AGENT", action = "CREATE_TASK")
     public ApiResponse<AgentTaskEntity> createTask(@Valid @RequestBody CreateAgentTaskRequest request) {
         return ApiResponse.ok(agentService.createTask(request));
     }
@@ -38,6 +40,7 @@ public class AgentController {
 
     @PostMapping("/tasks/{taskId}/cancel")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
+    @AuditLog(module = "AGENT", action = "CANCEL_TASK")
     public ApiResponse<AgentTaskEntity> cancelTask(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.cancelTask(taskId));
     }
@@ -57,6 +60,7 @@ public class AgentController {
 
     @PostMapping("/tasks/{taskId}/retry")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
+    @AuditLog(module = "AGENT", action = "RETRY_TASK")
     public ApiResponse<AgentTaskEntity> retryTask(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.retryTask(taskId));
     }
@@ -68,6 +72,7 @@ public class AgentController {
 
     @PostMapping("/reports/import")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
+    @AuditLog(module = "AGENT", action = "IMPORT_REPORT")
     public ApiResponse<AgentExecutionReportEntity> importReport(@Valid @RequestBody ImportAgentReportRequest request) {
         return ApiResponse.ok(agentService.importReport(request.taskId(), request));
     }

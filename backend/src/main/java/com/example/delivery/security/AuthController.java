@@ -1,10 +1,12 @@
 package com.example.delivery.security;
 
+import com.example.delivery.audit.AuditService;
 import com.example.delivery.common.api.ApiResponse;
 import com.example.delivery.common.api.ErrorCode;
 import com.example.delivery.common.exception.BusinessException;
 import com.example.delivery.user.UserEntity;
 import com.example.delivery.user.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -17,26 +19,36 @@ public class AuthController {
 
     private final UserService userService;
     private final JwtUtil jwtUtil;
+    private final AuditService auditService;
 
-    public AuthController(UserService userService, JwtUtil jwtUtil) {
+    public AuthController(UserService userService, JwtUtil jwtUtil, AuditService auditService) {
         this.userService = userService;
         this.jwtUtil = jwtUtil;
+        this.auditService = auditService;
     }
 
     @PostMapping("/login")
-    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                            HttpServletRequest httpRequest) {
+        String ip = httpRequest.getRemoteAddr();
         UserEntity user = userService.findByUsername(request.username())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误"));
+                .orElseThrow(() -> {
+                    auditService.recordLogin(request.username(), "FAILED", ip);
+                    return new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
+                });
 
         if (!"ENABLED".equals(user.status())) {
+            auditService.recordLogin(request.username(), "DISABLED", ip);
             throw new BusinessException(ErrorCode.FORBIDDEN, "账号已被禁用");
         }
         if (!userService.verifyPassword(request.password(), user.passwordHash())) {
+            auditService.recordLogin(request.username(), "FAILED", ip);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
 
         String token = jwtUtil.generate(user.id(), user.username(), user.displayName(), user.roles());
         CurrentUser currentUser = new CurrentUser(user.id(), user.username(), user.displayName(), user.roles());
+        auditService.recordLogin(user.username(), "SUCCESS", ip);
         return ApiResponse.ok(new LoginResponse(token, currentUser));
     }
 

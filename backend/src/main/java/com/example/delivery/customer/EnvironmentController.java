@@ -1,5 +1,6 @@
 package com.example.delivery.customer;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -31,6 +32,7 @@ public class EnvironmentController {
 
     @PutMapping("/{id}/bind-plan")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "ENVIRONMENT", action = "BIND_PLAN")
     public ApiResponse<CustomerEnvironmentEntity> bindPlan(
             @PathVariable Long id,
             @Valid @RequestBody BindDeployPlanRequest request
@@ -47,6 +49,7 @@ public class EnvironmentController {
 
     @PostMapping("/{id}/variables")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "ENV_VARIABLE", action = "CREATE")
     public ApiResponse<EnvVariableEntity> createVariable(
             @PathVariable Long id,
             @Valid @RequestBody CreateVariableRequest request
@@ -57,6 +60,7 @@ public class EnvironmentController {
 
     @PutMapping("/{id}/variables/{variableId}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "ENV_VARIABLE", action = "UPDATE")
     public ApiResponse<EnvVariableEntity> updateVariable(
             @PathVariable Long id,
             @PathVariable Long variableId,
@@ -67,6 +71,7 @@ public class EnvironmentController {
 
     @DeleteMapping("/{id}/variables/{variableId}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "ENV_VARIABLE", action = "DELETE")
     public ApiResponse<Void> deleteVariable(@PathVariable Long id, @PathVariable Long variableId) {
         customerService.deleteVariable(variableId);
         return ApiResponse.ok();
@@ -74,6 +79,7 @@ public class EnvironmentController {
 
     @PostMapping("/{id}/variables/clone-from/{fromId}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "ENV_VARIABLE", action = "CLONE")
     public ApiResponse<List<EnvVariableEntity>> cloneVariables(
             @PathVariable Long id,
             @PathVariable Long fromId

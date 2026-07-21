@@ -1,5 +1,6 @@
 package com.example.delivery.customer;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -35,6 +36,7 @@ public class CustomerController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "CUSTOMER", action = "CREATE")
     public ApiResponse<CustomerEntity> createCustomer(@Valid @RequestBody CreateCustomerRequest req) {
         return ApiResponse.ok(customerService.createCustomer(
                 req.customerCode(), req.customerName(), req.shortName(), req.industry()));
@@ -42,6 +44,7 @@ public class CustomerController {
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "CUSTOMER", action = "UPDATE")
     public ApiResponse<CustomerEntity> updateCustomer(
             @PathVariable Long id,
             @Valid @RequestBody UpdateCustomerRequest req
@@ -51,6 +54,7 @@ public class CustomerController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "CUSTOMER", action = "DELETE")
     public ApiResponse<Void> deleteCustomer(@PathVariable Long id) {
         customerService.deleteCustomer(id);
         return ApiResponse.ok();
