@@ -291,6 +291,25 @@ export type BindDeployPlanPayload = {
   deployPlanVersionId: number
 }
 
+export type AgentInstance = {
+  id: number
+  agentCode: string
+  hostname?: string
+  ipAddress?: string
+  customerId?: number
+  environmentId?: number
+  instanceStatus: string
+  lastHeartbeatAt?: string
+  registeredAt?: string
+}
+
+export type RegisterAgentPayload = {
+  agentCode: string
+  hostname?: string
+  customerId?: number
+  environmentId?: number
+}
+
 export type CreateDeployPlanPayload = {
   planCode: string
   planName: string
@@ -402,6 +421,12 @@ export const api = {
   importAgentReport: (payload: ImportAgentReportPayload) => post<AgentExecutionReport>('/api/agents/offline/reports/import', payload),
   agentReports: () => get<AgentExecutionReport[]>('/api/agents/offline/reports'),
   agentReport: (taskId: number) => get<AgentExecutionReport>(`/api/agents/offline/tasks/${taskId}/report`),
+
+  // ---- 在线 Agent 实例 ----
+  agentInstances: () => get<AgentInstance[]>('/api/agents/offline/instances'),
+  registerAgent: (payload: RegisterAgentPayload) => post<AgentInstance>('/api/agents/offline/instances/register', payload),
+  agentHeartbeat: (code: string) => post<AgentInstance>(`/api/agents/offline/instances/${code}/heartbeat`, {}),
+  agentClaimTask: (code: string) => post<AgentTask | null>(`/api/agents/offline/instances/${code}/claim`, {}),
 
   // ---- 审计日志 ----
   operationLogs: () => get<OperationLog[]>('/api/audit/operation-logs'),

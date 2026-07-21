@@ -86,4 +86,30 @@ public class AgentController {
     public ApiResponse<AgentExecutionReportEntity> getReport(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.getReport(taskId));
     }
+
+    // ==================== 在线 Agent ====================
+
+    @GetMapping("/instances")
+    public ApiResponse<List<AgentInstanceEntity>> listInstances() {
+        return ApiResponse.ok(agentService.listInstances());
+    }
+
+    @PostMapping("/instances/register")
+    @AuditLog(module = "AGENT", action = "REGISTER_INSTANCE")
+    public ApiResponse<AgentInstanceEntity> register(
+            @Valid @RequestBody RegisterAgentRequest request,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        return ApiResponse.ok(agentService.registerInstance(request, httpRequest.getRemoteAddr()));
+    }
+
+    @PostMapping("/instances/{agentCode}/heartbeat")
+    public ApiResponse<AgentInstanceEntity> heartbeat(@PathVariable String agentCode) {
+        return ApiResponse.ok(agentService.heartbeat(agentCode));
+    }
+
+    @PostMapping("/instances/{agentCode}/claim")
+    @AuditLog(module = "AGENT", action = "CLAIM_TASK")
+    public ApiResponse<AgentTaskEntity> claimNextTask(@PathVariable String agentCode) {
+        return ApiResponse.ok(agentService.claimNextTask(agentCode));
+    }
 }

@@ -403,6 +403,19 @@ MinIO 冒烟通过：
 - **Part C 统计 Dashboard**：`stats` 包（`StatsOverview`/`StatsService` 复用 list 聚合无新表/`StatsController` `GET /api/stats/overview`）；前端 http.ts 加类型与 API，`DashboardView` 升级统计卡片+任务状态分布，`AuditLogView` 加登录日志第三 Tab。
 - 验证：后端 **45/45**（+1 StatsServiceTests），前端 **59** 模块 build。
 
-### 下一步——最后阶段：在线 Agent
+### 阶段六（在线 Agent，拉模型）已完成 —— doc/10 全功能收官
 
-按 doc/10，唯一剩余是在线 Agent：平台侧下发任务 + agent 心跳注册（`agent_instance` 表，需 `V7__` 迁移）+ 实时状态回传。离线执行内核可复用。所有提交不带共同作者。
+选型：**拉模型**（agent 主动拉取，平台不反连），适合私有化/防火墙环境，复用现有 `agent_task` 状态机。
+
+- `V7__agent_instance.sql`：在线 agent 实例表（agent_code 唯一、hostname/ip、customer/environment、instance_status ONLINE/OFFLINE、last_heartbeat_at）。
+- `AgentInstanceEntity` + `RegisterAgentRequest` + `AgentInstanceRepository`（`@Profile("local")`，含 insert/reRegister/heartbeat/markStaleOffline）。
+- `AgentService` 扩展（双路径，注入 `ObjectProvider<AgentInstanceRepository>`）：
+  - `registerInstance`（按 agentCode 幂等，存在则重注册为在线）
+  - `heartbeat`（保活）
+  - `listInstances`（先 `markStaleOffline` 超 90 秒无心跳→OFFLINE）
+  - `claimNextTask`（拉模型：认领最早 PENDING 任务→RUNNING，复用 reportStatus，无任务返回 null）
+- `AgentController`：`GET /instances`、`POST /instances/register`（@AuditLog）、`POST /instances/{code}/heartbeat`、`POST /instances/{code}/claim`（@AuditLog）。
+- 前端：`http.ts` 加 AgentInstance/RegisterAgent 类型与 4 个 API；`OfflineAgentView` 顶部加"在线 Agent 实例"面板（注册表单 + 实例表 + 心跳/认领按钮）。
+- 验证：后端 **49/49**（+4 AgentInstanceTests：注册+心跳保活、按 code 幂等、认领 PENDING→RUNNING、无任务返回 null），前端 **59** 模块 build。
+
+**doc/10 五大阶段 + 在线 Agent 全部完成。** 后续可做的增量：真实 agent 客户端二进制、实时日志流（WebSocket/SSE）、自动回滚、更细数据权限、审计查询筛选。所有提交不带共同作者。
