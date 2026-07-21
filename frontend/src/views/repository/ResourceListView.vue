@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, type CreateResourceVersionPayload, type HarborSyncPayload, type Resource, type ResourceSourceType, type ResourceStatus, type ResourceType, type ResourceVersion } from '../../api/http'
+import { api, type CreateResourceVersionPayload, type HarborSyncPayload, type Resource, type ResourceSourceType, type ResourceStatus, type ResourceType, type ResourceVersion, type SourceRepository } from '../../api/http'
 
 const resourceTypes: ResourceType[] = ['JAR', 'IMAGE', 'SQL', 'SCRIPT', 'CONFIG', 'PACKAGE']
 const sourceTypes: ResourceSourceType[] = ['UPLOAD', 'HARBOR', 'NEXUS', 'MAVEN', 'INTERNAL_REPO']
@@ -42,13 +42,20 @@ const uploadFile = ref<File | null>(null)
 const uploadLoading = ref(false)
 
 // harbor sync state
-const harborForm = reactive<HarborSyncPayload>({ project: '', repository: '', tag: '', version: '', releaseNote: '' })
+const harborForm = reactive<HarborSyncPayload>({ sourceRepositoryId: undefined, project: '', repository: '', tag: '', version: '', releaseNote: '' })
 const harborLoading = ref(false)
+
+// 可选源仓库（仅启用的）
+const sources = ref<SourceRepository[]>([])
+const enabledSources = computed(() => sources.value.filter(s => s.status === 'ENABLED'))
+async function loadSources() {
+  try { sources.value = await api.sourceRepositories() } catch { /* 源仓库不可用不阻塞资源页 */ }
+}
 
 const selectedResource = computed(() => resources.value.find((item) => item.id === selectedResourceId.value))
 const isEditingResource = computed(() => editingResourceId.value !== undefined)
 
-onMounted(loadResources)
+onMounted(() => { loadResources(); loadSources() })
 
 async function loadResources() {
   loading.value = true
@@ -213,7 +220,7 @@ async function submitHarborSync() {
   harborLoading.value = true
   try {
     await api.harborSync(selectedResource.value.id, { ...harborForm })
-    Object.assign(harborForm, { project: '', repository: '', tag: '', version: '', releaseNote: '' })
+    Object.assign(harborForm, { sourceRepositoryId: undefined, project: '', repository: '', tag: '', version: '', releaseNote: '' })
     await loadVersions(selectedResource.value.id)
   } catch (err) {
     versionError.value = err instanceof Error ? err.message : 'Harbor 同步失败'
@@ -390,6 +397,15 @@ function formatDate(value?: string) {
 
       <!-- Harbor 同步 -->
       <form v-else class="form-grid" @submit.prevent="submitHarborSync">
+        <label class="field field-wide">
+          <span>源仓库（选填，留空用全局配置）</span>
+          <select v-model="harborForm.sourceRepositoryId">
+            <option :value="undefined">— 使用全局 app.harbor 配置 —</option>
+            <option v-for="s in enabledSources" :key="s.id" :value="s.id">
+              {{ s.repoName }} ({{ s.baseUrl }})
+            </option>
+          </select>
+        </label>
         <label class="field">
           <span>Harbor 项目</span>
           <input v-model.trim="harborForm.project" required placeholder="library" />

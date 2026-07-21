@@ -132,7 +132,46 @@ export type CreateCustomerPayload = { customerCode: string; customerName: string
 export type UpdateCustomerPayload = { customerName: string; shortName?: string; industry?: string }
 export type CreateVariablePayload = { key: string; value: string; sensitive: boolean }
 export type UpdateVariablePayload = { value: string; sensitive: boolean }
-export type HarborSyncPayload     = { project: string; repository: string; tag: string; version?: string; releaseNote?: string }
+export type HarborSyncPayload     = { sourceRepositoryId?: number; project: string; repository: string; tag: string; version?: string; releaseNote?: string }
+
+export type SourceRepositoryType = 'HARBOR' | 'NEXUS' | 'MAVEN' | 'GENERIC'
+
+export type SourceRepository = {
+  id: number
+  repoCode: string
+  repoName: string
+  repoType: SourceRepositoryType
+  baseUrl: string
+  username?: string
+  password?: string
+  description?: string
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type CreateSourceRepositoryPayload = {
+  repoCode: string
+  repoName: string
+  repoType: SourceRepositoryType
+  baseUrl: string
+  username?: string
+  password?: string
+  description?: string
+  status?: string
+}
+
+export type UpdateSourceRepositoryPayload = {
+  repoName: string
+  repoType: SourceRepositoryType
+  baseUrl: string
+  username?: string
+  password?: string
+  description?: string
+  status?: string
+}
+
+export type SourceRepoTestResult = { success: boolean; message: string }
 
 export type Snapshot = {
   id: number
@@ -514,4 +553,15 @@ export const api = {
     }),
   harborSync: (resourceId: number, payload: HarborSyncPayload) =>
     post<ResourceVersion>(`/api/repository/resources/${resourceId}/versions/harbor-sync`, payload),
+
+  // ---- 源仓库管理 ----
+  sourceRepositories: () => get<SourceRepository[]>('/api/repository/sources'),
+  createSourceRepository: (payload: CreateSourceRepositoryPayload) =>
+    post<SourceRepository>('/api/repository/sources', payload),
+  updateSourceRepository: (id: number, payload: UpdateSourceRepositoryPayload) =>
+    put<SourceRepository>(`/api/repository/sources/${id}`, payload),
+  deleteSourceRepository: (id: number) =>
+    del<void>(`/api/repository/sources/${id}`),
+  testSourceRepository: (id: number) =>
+    post<SourceRepoTestResult>(`/api/repository/sources/${id}/test-connection`, {}),
 }
