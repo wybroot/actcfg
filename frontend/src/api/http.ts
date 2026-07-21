@@ -170,6 +170,18 @@ export type StatsOverview = {
   taskStatusCounts: Record<string, number>
 }
 
+export type Attribution = { label: string; count: number }
+
+export type DeployStats = {
+  totalTasks: number
+  successCount: number
+  failedCount: number
+  canceledCount: number
+  successRate: number
+  topFailedSteps: Attribution[]
+  topFailReasons: Attribution[]
+}
+
 export type PackageBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
 export type PackageLifecycleState = 'ACTIVE' | 'ARCHIVED' | 'DEPRECATED' | 'PURGED'
 export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'RETRYING' | 'CANCELED'
@@ -443,6 +455,7 @@ export const api = {
 
   // ---- 统计概览 ----
   statsOverview: () => get<StatsOverview>('/api/stats/overview'),
+  deployStats: () => get<DeployStats>('/api/stats/deploy'),
 
   // ---- 配置快照 ----
   environmentSnapshot: (environmentId: number) => get<SnapshotDetail>(`/api/environments/${environmentId}/snapshot`),
@@ -490,6 +503,7 @@ export const api = {
     del<void>(`/api/environments/${environmentId}/variables/${variableId}`),
   cloneVariables: (toEnvironmentId: number, fromEnvironmentId: number) =>
     post<EnvVariable[]>(`/api/environments/${toEnvironmentId}/variables/clone-from/${fromEnvironmentId}`, {}),
+  rotateSecrets: () => post<number>('/api/environments/variables/rotate-secrets', {}),
 
   // ---- 制品上传 & Harbor 同步 ----
   uploadResourceVersion: (resourceId: number, formData: FormData) =>

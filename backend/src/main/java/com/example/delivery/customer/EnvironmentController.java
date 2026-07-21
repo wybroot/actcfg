@@ -87,6 +87,14 @@ public class EnvironmentController {
         return ApiResponse.ok(customerService.cloneVariables(fromId, id));
     }
 
+    /** 密钥轮换：将所有敏感变量重新用当前活跃密钥加密。系统级操作，仅超管。 */
+    @PostMapping("/variables/rotate-secrets")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @AuditLog(module = "ENV_VARIABLE", action = "ROTATE_SECRETS")
+    public ApiResponse<Integer> rotateSecrets() {
+        return ApiResponse.ok(customerService.rotateSecrets());
+    }
+
     // ---- 内部 DTO ----
     public record CreateVariableRequest(@NotBlank String key, String value, boolean sensitive) {}
     public record UpdateVariableRequest(@NotNull String value, boolean sensitive) {}

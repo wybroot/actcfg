@@ -37,4 +37,18 @@ class StatsServiceTests {
         long sum = overview.taskStatusCounts().values().stream().mapToLong(Long::longValue).sum();
         assertEquals(overview.agentTaskCount(), sum);
     }
+
+    @Test
+    void deployStatsComputesRateAndFinishedCount() {
+        DeployStats stats = statsService.deployStats();
+
+        // 成功率在 0-100 之间，已结束数不超过任务总数
+        assertTrue(stats.successRate() >= 0.0 && stats.successRate() <= 100.0);
+        assertTrue(stats.totalTasks() >= 0);
+        // 成功+失败+取消不超过已结束总数
+        assertTrue(stats.successCount() + stats.failedCount() + stats.canceledCount() <= stats.totalTasks());
+        // 归因列表最多 5 项
+        assertTrue(stats.topFailedSteps().size() <= 5);
+        assertTrue(stats.topFailReasons().size() <= 5);
+    }
 }

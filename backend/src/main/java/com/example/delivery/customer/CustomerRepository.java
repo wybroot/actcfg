@@ -117,6 +117,21 @@ public class CustomerRepository {
         }
     }
 
+    /** 全部敏感变量（供密钥轮换扫描）。 */
+    public List<EnvVariableEntity> findAllSensitiveVariables() {
+        return jdbcTemplate.query("""
+                SELECT id, environment_id, variable_key, variable_value, masked_value, is_sensitive
+                FROM env_variable
+                WHERE is_sensitive = 1
+                ORDER BY id ASC
+                """, variableMapper);
+    }
+
+    /** 仅更新存储值（密文），用于轮换重新加密，不改动 key/敏感标记。 */
+    public void updateVariableValueRaw(Long id, String storedValue) {
+        jdbcTemplate.update("UPDATE env_variable SET variable_value = ? WHERE id = ?", storedValue, id);
+    }
+
     // ---- 客户增删改 ----
 
     public CustomerEntity insertCustomer(String code, String name, String shortName, String industry) {

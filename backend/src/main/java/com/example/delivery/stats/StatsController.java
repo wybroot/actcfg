@@ -18,4 +18,9 @@ public class StatsController {
     public ApiResponse<StatsOverview> overview() {
         return ApiResponse.ok(statsService.overview());
     }
+
+    @GetMapping("/deploy")
+    public ApiResponse<DeployStats> deployStats() {
+        return ApiResponse.ok(statsService.deployStats());
+    }
 }

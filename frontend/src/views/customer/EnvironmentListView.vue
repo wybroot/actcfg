@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, type BindDeployPlanPayload, type Customer, type CustomerEnvironment, type EnvVariable, type SnapshotDetail } from '../../api/http'
+import { useAuth } from '../../composables/useAuth'
+
+const { hasRole } = useAuth()
+const isSuperAdmin = computed(() => hasRole('SUPER_ADMIN'))
 
 // ---- 客户选择 ----
 const customers = ref<Customer[]>([])
@@ -147,6 +151,15 @@ async function cloneVars() {
   } catch (e: unknown) { alert(e instanceof Error ? e.message : '克隆失败') }
 }
 
+async function rotateSecrets() {
+  if (!window.confirm('将用当前活跃密钥重新加密所有敏感变量，确认轮换？')) return
+  try {
+    const count = await api.rotateSecrets()
+    if (selectedEnvironmentId.value) await loadVariables(selectedEnvironmentId.value)
+    alert(`密钥轮换完成，重新加密 ${count} 个敏感变量`)
+  } catch (e: unknown) { alert(e instanceof Error ? e.message : '轮换失败') }
+}
+
 onMounted(loadCustomers)
 </script>
 
@@ -220,6 +233,7 @@ onMounted(loadCustomers)
             </option>
           </select>
           <button class="button secondary" :disabled="!cloneFromId" @click="cloneVars">克隆</button>
+          <button v-if="isSuperAdmin" class="button secondary" @click="rotateSecrets">轮换密钥</button>
           <button class="button primary" @click="openCreateVar">+ 新增变量</button>
         </div>
       </div>
