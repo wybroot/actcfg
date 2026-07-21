@@ -66,6 +66,25 @@ class ExecutionPlanServiceTests {
     }
 
     @Test
+    void loadImageStepCarriesFullCoordinateAndScriptPulls() {
+        // 镜像坐标（含 registry/project/repo:tag）应完整作为 LOAD_IMAGE 步骤目标，不被截断
+        List<ComponentDescriptor> components = List.of(
+                new ComponentDescriptor("应用服务", "IMAGE", "harbor.internal/proj/app:1.2.3", null, null, 1)
+        );
+        ExecutionPlan plan = service.buildPlan("PKG-IMG", components);
+
+        DeployStep loadImage = plan.steps().stream()
+                .filter(s -> s.type() == DeployStepType.LOAD_IMAGE)
+                .findFirst().orElseThrow();
+        assertEquals("harbor.internal/proj/app:1.2.3", loadImage.target());
+
+        // 生成脚本：无 tar 时按坐标 docker pull（源仓库/代理拉取路径）
+        String script = service.generateAgentScript(plan);
+        assertTrue(script.contains("docker load -i"), "应保留离线 tar 加载路径");
+        assertTrue(script.contains("docker pull"), "应含从源仓库拉取路径");
+    }
+
+    @Test
     void renderPlanJsonIsValidShape() {
         ExecutionPlan plan = service.buildPlan("PKG-TEST-003", List.of());
         String json = service.renderPlanJson(plan);

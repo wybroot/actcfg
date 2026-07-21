@@ -404,14 +404,16 @@ public class PackageBuildService {
             int order = 1;
             for (SnapshotComponentEntity c : snapshotService.listComponents(snapshot.id())) {
                 String url = null;
+                String imageRef = null;
                 String resourceType = "UNKNOWN";
                 if (c.resourceVersionId() != null) {
                     ResourceVersionEntity rv = resourceService.getVersion(c.resourceVersionId());
                     url = rv.externalUrl();
+                    imageRef = imageCoordinate(rv);
                     resourceType = resourceService.getResource(rv.resourceId()).resourceType().name();
                 }
                 result.add(new ComponentSource(c.componentName(), resourceType, c.configTemplate(),
-                        c.healthCheck(), url, c.deployOrder() == 0 ? order++ : c.deployOrder()));
+                        c.healthCheck(), url, imageRef, c.deployOrder() == 0 ? order++ : c.deployOrder()));
             }
             return result;
         }
@@ -419,20 +421,40 @@ public class PackageBuildService {
             ResourceVersionEntity rv = resourceService.getVersion(c.resourceVersionId());
             String resourceType = resourceService.getResource(rv.resourceId()).resourceType().name();
             result.add(new ComponentSource(c.componentName(), resourceType, c.configTemplate(),
-                    c.healthCheck(), rv.externalUrl(), c.deployOrder()));
+                    c.healthCheck(), rv.externalUrl(), imageCoordinate(rv), c.deployOrder()));
         }
         return result;
     }
 
     private record ComponentSource(String componentName, String resourceType, String configTemplate,
-                                   String healthCheck, String artifactUrl, int deployOrder) {}
+                                   String healthCheck, String artifactUrl, String imageRef, int deployOrder) {}
 
     private List<ComponentDescriptor> toDescriptors(List<ComponentSource> sources) {
         return sources.stream()
                 .map(s -> new ComponentDescriptor(s.componentName(), s.resourceType(),
-                        s.artifactUrl() != null ? fileName(s.artifactUrl()) : s.componentName(),
+                        descriptorRef(s),
                         s.configTemplate(), s.healthCheck(), s.deployOrder()))
                 .toList();
+    }
+
+    /**
+     * 制品引用：镜像组件用完整坐标 repo:tag（供 agent docker pull，不截断），
+     * 其它制品用文件名（供 docker load / 部署），都取不到时回退组件名。
+     */
+    private String descriptorRef(ComponentSource s) {
+        if ("IMAGE".equalsIgnoreCase(s.resourceType()) && s.imageRef() != null && !s.imageRef().isBlank()) {
+            return s.imageRef();
+        }
+        return s.artifactUrl() != null ? fileName(s.artifactUrl()) : s.componentName();
+    }
+
+    /** 由镜像仓库与标签拼接完整坐标 repo:tag；缺任一返回 null。 */
+    private String imageCoordinate(ResourceVersionEntity rv) {
+        if (rv.imageRepository() == null || rv.imageRepository().isBlank()
+                || rv.imageTag() == null || rv.imageTag().isBlank()) {
+            return null;
+        }
+        return rv.imageRepository() + ":" + rv.imageTag();
     }
 
     /** 获取部署包的离线执行计划（供前端预览）。 */

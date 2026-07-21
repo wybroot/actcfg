@@ -128,8 +128,11 @@ public class ExecutionPlanService {
         sb.append("  df -h . | tail -1\n");
         sb.append("  return 0\n}\n\n");
         sb.append("compat_check() { log \"校验部署包与目标环境兼容性\"; [ -f manifest.json ] || { log '缺少 manifest.json'; return 1; }; return 0; }\n\n");
+        // 镜像获取：包内有 tar 则优先 docker load（完全离线）；否则按同步登记的坐标 docker pull（现场可达源仓库/代理）
         sb.append("load_image() { local ref=\"$1\"; log \"加载镜像 $ref\"; local tar; tar=$(ls artifacts/*/*.tar 2>/dev/null | head -1);");
-        sb.append(" if [ -n \"$tar\" ]; then docker load -i \"$tar\" || return 1; else log '未找到镜像 tar，按引用拉取: '$ref; fi; return 0; }\n\n");
+        sb.append(" if [ -n \"$tar\" ]; then log \"发现镜像 tar，离线加载: $tar\"; docker load -i \"$tar\" || return 1;");
+        sb.append(" elif [ -n \"$ref\" ]; then log \"包内无 tar，从源仓库拉取: $ref\"; docker pull \"$ref\" || { log \"拉取失败: $ref\"; return 1; };");
+        sb.append(" else log '无镜像 tar 且无镜像坐标，跳过'; fi; return 0; }\n\n");
         sb.append("db_init() { local f=\"$1\"; log \"执行数据库初始化脚本 $f\"; return 0; }\n\n");
         sb.append("render_config() { local name=\"$1\"; log \"渲染配置 $name\"; return 0; }\n\n");
         sb.append("deploy_artifact() { local ref=\"$1\"; log \"部署制品 $ref\"; return 0; }\n\n");
