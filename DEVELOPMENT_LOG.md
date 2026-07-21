@@ -419,3 +419,15 @@ MinIO 冒烟通过：
 - 验证：后端 **49/49**（+4 AgentInstanceTests：注册+心跳保活、按 code 幂等、认领 PENDING→RUNNING、无任务返回 null），前端 **59** 模块 build。
 
 **doc/10 五大阶段 + 在线 Agent 全部完成。** 后续可做的增量：真实 agent 客户端二进制、实时日志流（WebSocket/SSE）、自动回滚、更细数据权限、审计查询筛选。所有提交不带共同作者。
+
+### 通し测试（dev profile 实跑）与修复
+
+用 `java21 -jar` 以 dev profile（完全内存、无 MySQL/Redis/MinIO）实跑后端，真实 curl 走通全链路：
+- 登录取 JWT（admin/`Admin@123`，seed 四账号 admin/ops/impl/auditor）→ login-logs 正确记录 FAILED（先试错密码）+ SUCCESS。
+- stats/overview、packages、execution-plan（阶段四步骤真实生成）、在线 agent 注册/心跳/实例列表、创建 PENDING 任务→claim→RUNNING（拉模型）、操作日志 AOP 记录 REGISTER/CREATE/CLAIM 均 SUCCESS+operatorName。
+
+**发现并修复 2 个真实 bug**：
+1. `@PreAuthorize` 抛的 `AccessDeniedException` 被 `GlobalExceptionHandler` 的通用 `Exception` 处理器吞成 HTTP 200 + 500001「系统内部错误」。→ 加专用 `@ExceptionHandler(AccessDeniedException.class)` 返回 **403 + 403001「无操作权限」**；未捕获异常补日志。
+2. 被拒绝的写操作**未进审计**（`@PreAuthorize` 拦截器先于 `@Around` 切面执行，方法未到达）。→ 给 `AuditLogAspect` 加 `@Order(100)`（低于 Security 拦截器 400），切面包住权限校验，拒绝时记 **FAILED**。实测 auditor 建客户返回 403 且操作日志出现 `auditor/CUSTOMER/CREATE/FAILED`。
+
+修复后 `mvn test` **49/49** 仍绿，提交 `acd2eb2`（并修正 `.gitignore`，排除运行时 `data/storage/` 产物）。环境提示：系统 PATH 的 `java` 是 1.8，需用 `JAVA_HOME` 的 JDK21 启动 jar（Maven 已用 21）。
