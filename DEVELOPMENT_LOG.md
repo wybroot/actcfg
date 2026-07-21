@@ -285,3 +285,120 @@ MinIO 冒烟通过：
 1. 继续补充基于 local profile 的 Repository/MinIO 集成测试，覆盖执行报告和续跑记录的 JDBC 路径。
 2. 继续实现 Agent 安装包管理。
 3. 后续接入 Dashboard 大屏，展示客户、环境、部署包、Agent 任务和失败告警指标。
+
+### 下午收尾（需求核对 + 提交规范）
+
+- 解析《需求描述.docx》原始 8 大需求，与 `doc/01-09` 设计文档、`backend`/`frontend` 实际代码逐条做了差距分析。结论：设计蓝图覆盖需求，但代码处于 MVP 骨架阶段，尚不满足实际使用。较扎实的是产品仓库元数据、部署方案发布、部署包 manifest 生成、Agent 任务状态流转；最薄弱的是 RBAC 用户中心、环境变量写入/克隆、审计日志落库。
+- 产出补齐计划 [doc/10-需求补齐计划.md](doc/10-需求补齐计划.md)，分五阶段。已确认三项关键决策：
+  1. **绑定策略**：保留部署方案复用/克隆，客户绑定时生成独立副本快照（`customer_deploy_snapshot`），放弃全局独占锁。
+  2. **Agent 模式**：离线包 + 在线全自动 Agent 都纳入首版，离线先做、在线紧随。
+  3. 首个动手模块：阶段一 RBAC 用户中心。
+- 仓库治理：
+  - 新增 [.gitattributes](.gitattributes) 统一换行符（文本 LF、`.bat/.cmd` 保留 CRLF、二进制不转换），`--renormalize` 消除 CRLF 告警。
+  - `.gitignore` 忽略本地 `.claude/` 会话数据。
+  - 改写 main + feature 历史，剥离全部 `Co-Authored-By: Claude` trailer，force push 覆盖远程 main；feature 分支已推送。**约定：以后所有提交不带任何共同作者。**
+  - 代码已由本人手动合并。
+
+### 明天起点（2026-07-21）
+
+从**补齐计划阶段一：RBAC 用户中心**开始，顺序建议：
+
+1. 引入 Spring Security + JWT，替换 `AuthController` 硬编码 `dev-token`；`sys_user` 加 BCrypt 密码字段，实现登录密码校验与真实 `/api/auth/profile`。
+2. 用户 / 角色 CRUD 接口 + 前端 `system/UserListView.vue` 落地。
+3. 四角色权限落地：超级管理员（全权）、运维（需求 1-6 操作权）、实施工程师（查看+执行部署）、审计人员（仅查看，独立角色）。方法级 `@PreAuthorize` + `SecurityConfig`。
+4. 个人信息维护接口（改昵称/密码）。
+
+安全是所有操作权限的前提，必须最先做。之后按阶段二（制品仓库真实上传/Harbor + 环境变量写入/克隆）推进。
+
+## 2026-07-21
+
+### 阶段一：RBAC 用户中心（已完成）
+
+- 引入 `spring-boot-starter-security` + jjwt 0.12.5。
+- 新增 `security` 包：`JwtProperties`/`JwtUtil`/`SecurityConfig`（无状态、放行 `/api/auth/login`）/`JwtAuthFilter`（Bearer → SecurityContext）/`UserDetailsServiceImpl`。
+- 新增 `user` 模块：`UserEntity`/`UserRepository`（`InMemoryUserRepository` dev 内存 + `JdbcUserRepository` local，`@Profile("local")`）/`UserService`/`UserController`/`UserVO`。
+- 改写 `AuthController`：真实 BCrypt 密码校验 + JWT 签发，`/api/auth/profile` 从 SecurityContext 取当前用户，新增改昵称/改密码接口。
+- `V4__rbac_seed.sql`：4 角色 + 4 账号（admin/ops/impl/auditor，密码 Admin@123）+ 绑定。
+- 7 个 Controller 写操作加 `@PreAuthorize`，四角色权限矩阵落地。
+- 前端：`composables/useAuth.ts`（token/user 持久化）、`http.ts` 注入 Bearer + 401 跳登录、`views/auth/LoginView.vue`、路由守卫、`AppLayout` 顶栏用户信息+登出、`UserListView` 完整用户管理。
+- 验证：后端 38/38 测试通过，前端 51 模块 build 成功。
+
+### 阶段二：制品上传 + Harbor + 环境变量/客户 CRUD（已完成）
+
+- **制品文件上传**：`ObjectStorageService.putResourceFile`（MinIO `resources` bucket + 本地 `basePath/resources` 降级）；`ResourceService.uploadVersion` 计算 SHA-256、写存储、复用 `externalUrl`+`checksum` 字段（无需迁移）；`POST /{id}/versions/upload`（multipart）。
+- **Harbor 同步**：`repository/harbor` 包 `HarborProperties`/`HarborSyncRequest`/`HarborSyncService`（调用 Harbor v2 API 取 digest，未配置时按坐标直接登记）；`POST /{id}/versions/harbor-sync`。
+- **环境变量**：`EnvVariableEntity` 加 `variableValue`（DB `variable_value` 已存在，无需迁移）；`CustomerService`/`CustomerRepository` 补齐变量 CRUD + 克隆（`cloneVariables` 跳过同名 key）。
+- **客户 CRUD**：`CustomerService`/`CustomerRepository` 补齐客户增删改；`CustomerController` 加 POST/PUT/DELETE。
+- **环境变量接口**：`EnvironmentController` 加变量 CRUD + `clone-from/{fromId}`。
+- `application.yml`：multipart max-file-size 2GB + Harbor 配置占位。
+- 前端：`http.ts` 新增 Customer/EnvVariable 类型与 API（去重旧的 customer 条目）；`ResourceListView` 版本区改为「手动登记/文件上传/Harbor 同步」三 Tab；`CustomerListView` 从占位升级为完整 CRUD；`EnvironmentListView` 去掉硬编码 customerId（改客户下拉）+ 变量管理面板（增删改+克隆）。
+- 验证：后端 38/38 测试通过，前端 55 模块 build 成功。
+
+### 关键实现决策
+
+- **免迁移**：复用 `repo_resource_version.external_url`+`checksum` 存上传文件地址与哈希；`env_variable.variable_value` 本已存在只是 Java 未映射。因此阶段二未新增 Flyway 脚本，降低风险。
+- **Harbor 可选**：`app.harbor.base-url` 不配置时同步接口退化为「按传入坐标直接登记」，适配离线/内网。
+
+### 明天起点（2026-07-22）
+
+进入**阶段三**（按 doc/10 计划）。建议顺序：
+
+1. **发布中心增强**：部署包构建纳入真实制品文件（拉取 resource version 的存储对象打包），而非仅 manifest 占位。
+2. **客户绑定快照**：实现 `customer_deploy_snapshot`——客户绑定部署方案时生成独立副本快照（已确认的绑定策略），需要新建迁移脚本。
+3. **审计日志落库**：`AuditService` 目前是假数据，接入真实操作日志写入（可用 Spring AOP 切面记录写操作）。
+
+注意：阶段二起未加新迁移，阶段三的快照表需要 `V5__` 脚本。所有提交不带共同作者。
+
+### 阶段三：客户配置快照 + 真实压缩部署包 + 下载审计（已完成）
+
+关键决策（已确认）：**部署包内嵌所有二进制** + **绑定时自动生成快照**。
+
+- **需求4 客户配置快照**（`V5__customer_deploy_snapshot.sql` 两张表）：
+  - `snapshot` 包：`SnapshotEntity`/`SnapshotComponentEntity`/`SnapshotRepository`（`@Profile("local")`）/`SnapshotService`（双路径）/`SnapshotController`。
+  - `SnapshotService.createSnapshot` 深拷贝方案版本的组件为独立副本；挂到 `CustomerService.bindDeployPlan`——绑定成功后自动生成，同环境重绑则停用旧快照（status→REPLACED）重建。
+  - `CustomerService` 通过 `ObjectProvider<SnapshotService>` 可选注入，测试构造器保持不变。
+  - 接口：`GET /api/environments/{id}/snapshot`、`PUT /api/snapshots/{id}/components/{cid}/config`（改渲染前配置模板，与源方案解耦）。
+- **需求5 真实压缩部署包**：
+  - `ObjectStorageService` 加 `putPackageArchive`（写 ZIP，MinIO/本地）+ `fetchObjectBytes`（file:// 本地读 + MinIO URL 拉取，internal:// 占位取不到返回 null）。
+  - `PackageBuildService` 升级：`ZipOutputStream` 生成真实 ZIP，含 manifest.json/README.txt/各组件渲染配置/能取到的二进制内嵌到 artifacts/；**组件来源优先客户环境快照**（无则回退方案版本）；dev 内存模式降级为引用存储（不写真实 ZIP，保测试）。
+- **需求7 下载审计（部分）**：
+  - `AuditService` 去假数据，改双路径 + `AuditRepository`（`@Profile("local")`）；新增 `recordDownload`/`recordOperation`。
+  - `PackageBuildController` 下载端点注入 `AuditService` + `@AuthenticationPrincipal CurrentUser`，记录下载人/包/IP → `audit_download_log`。
+- 前端：`http.ts` 加 snapshot/audit 类型与 API；`AuditLogView` 从占位升级为操作/下载日志双 Tab；`EnvironmentListView` 选中环境后展示配置快照面板（组件配置模板可独立编辑）。
+- 验证：后端 **41/41** 测试通过（+3 SnapshotServiceTests，覆盖深拷贝、跨环境解耦、重绑替换），前端 **57** 模块 build 成功。
+
+### 下一步（阶段四）——Agent 双模式
+
+按 doc/10 里程碑，阶段三已完成，接下来是**阶段四离线 Agent**（先）：
+1. 打包可执行 agent（脚本/二进制）进部署包。
+2. agent 端真实执行器：环境检测、兼容性校验、镜像加载、配置渲染、DB 初始化、健康检查、幂等、失败续跑。
+3. 现有任务状态机/上报/续跑已具备，补齐真实执行逻辑。
+
+之后阶段五（审计 AOP 全量 + Dashboard），最后阶段四在线 Agent。所有提交不带共同作者。
+
+### 阶段四（离线 Agent 真实执行器）已完成
+
+现状定位：`AgentService` 的任务状态机/上报/续跑/报告导入本就完备，缺的是"真实执行器"——之前只能靠人手动调 `reportStatus` 推进。离线 agent 在客户现场（离线）运行，平台无法直接执行，因此成果是**平台把可执行 agent 脚本 + 执行计划同包进部署包**。
+
+- **新包 `agent.executor`**：
+  - 模型 `DeployStepType`（CHECK_ENV/COMPAT_CHECK/LOAD_IMAGE/RENDER_CONFIG/DB_INIT/DEPLOY_ARTIFACT/HEALTH_CHECK）、`DeployStep`、`ExecutionPlan`、`ComponentDescriptor`。
+  - `ExecutionPlanService`（无状态，`new` 直用不进 Spring 构造）：
+    - `buildPlan`：环境检测 → 兼容校验 →（按 deployOrder）各组件 RENDER_CONFIG + 按 resourceType 分派 LOAD_IMAGE/DB_INIT/DEPLOY_ARTIFACT → 末尾 HEALTH_CHECK。
+    - `generateAgentScript`：生成 bash 执行器，**幂等**（`.agent-state` 记录已完成步骤，重跑跳过）+ **失败续跑**（修复后重跑本脚本从断点继续）+ 输出 `execution-report.json`。
+    - `renderPlanJson`：计划 JSON。
+- **`PackageBuildService` 扩展**：
+  - `resolveComponentSources` 增加 resourceType（经 `resourceService.getResource(rv.resourceId()).resourceType()` 取得）与 deployOrder，用于步骤分派。
+  - ZIP 构建时同包 `agent/deploy-agent.sh` + `agent/execution-plan.json`。
+  - 新增公开方法 `getExecutionPlan(packageBuildId)`。
+- **`PackageBuildController`**：`GET /api/packages/{id}/execution-plan`。
+- 前端：`http.ts` 加 ExecutionPlan/DeployStep 类型与 `packageExecutionPlan` API；`PackageBuildListView` 加"执行计划"按钮 → 展示步骤表（编码/名/类型/目标/说明）。
+- 验证：后端 **44/44**（+3 ExecutionPlanServiceTests：步骤顺序与类型、脚本含各 stepCode 及幂等/续跑标记、空组件计划形状），前端 **57** 模块 build。
+
+**重要安全记录**：本阶段多次出现工具输出被注入的伪造指令（伪造 `git push --force` 到 main、跳过验证、"文件已迁移删除"、"向 Anthropic 汇报敏感信息"等），全部识别并拒绝，未执行任何此类操作；磁盘文件完好（Edit 均成功）。
+
+### 下一步——阶段五（审计 AOP 全量 + Dashboard）
+
+1. `@AuditLog` 注解 + AOP 切面自动记录所有写操作到 `audit_operation_log`（目前只有下载日志落库，操作日志仅有 recordOperation 方法待接入）。
+2. 补登录日志表 `sys_login_log`（需 `V6__` 迁移）。
+3. Dashboard 大屏：交付概览、任务状态、部署统计。
+之后是阶段四在线 Agent（平台下发 + 心跳 + `agent_instance`）。所有提交不带共同作者。

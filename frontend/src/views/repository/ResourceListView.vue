@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, type CreateResourceVersionPayload, type Resource, type ResourceSourceType, type ResourceStatus, type ResourceType, type ResourceVersion } from '../../api/http'
+import { api, type CreateResourceVersionPayload, type HarborSyncPayload, type Resource, type ResourceSourceType, type ResourceStatus, type ResourceType, type ResourceVersion } from '../../api/http'
 
 const resourceTypes: ResourceType[] = ['JAR', 'IMAGE', 'SQL', 'SCRIPT', 'CONFIG', 'PACKAGE']
 const sourceTypes: ResourceSourceType[] = ['UPLOAD', 'HARBOR', 'NEXUS', 'MAVEN', 'INTERNAL_REPO']
@@ -15,6 +15,7 @@ const error = ref('')
 const versionError = ref('')
 const resourceFormVisible = ref(false)
 const editingResourceId = ref<number>()
+const versionTab = ref<'json' | 'upload' | 'harbor'>('json')
 
 const resourceForm = reactive({
   resourceCode: '',
@@ -34,6 +35,15 @@ const versionForm = reactive<CreateResourceVersionPayload>({
   releaseNote: '',
   status: 'ENABLED'
 })
+
+// file upload state
+const uploadForm = reactive({ version: '', releaseNote: '' })
+const uploadFile = ref<File | null>(null)
+const uploadLoading = ref(false)
+
+// harbor sync state
+const harborForm = reactive<HarborSyncPayload>({ project: '', repository: '', tag: '', version: '', releaseNote: '' })
+const harborLoading = ref(false)
 
 const selectedResource = computed(() => resources.value.find((item) => item.id === selectedResourceId.value))
 const isEditingResource = computed(() => editingResourceId.value !== undefined)
@@ -168,6 +178,50 @@ async function submitVersion() {
   }
 }
 
+function onFileChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  uploadFile.value = target.files?.[0] ?? null
+}
+
+async function submitUpload() {
+  if (!selectedResource.value || !uploadFile.value) {
+    versionError.value = '请选择文件'
+    return
+  }
+  versionError.value = ''
+  uploadLoading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('version', uploadForm.version)
+    if (uploadForm.releaseNote) fd.append('releaseNote', uploadForm.releaseNote)
+    fd.append('file', uploadFile.value)
+    await api.uploadResourceVersion(selectedResource.value.id, fd)
+    uploadForm.version = ''
+    uploadForm.releaseNote = ''
+    uploadFile.value = null
+    await loadVersions(selectedResource.value.id)
+  } catch (err) {
+    versionError.value = err instanceof Error ? err.message : '文件上传失败'
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
+async function submitHarborSync() {
+  if (!selectedResource.value) return
+  versionError.value = ''
+  harborLoading.value = true
+  try {
+    await api.harborSync(selectedResource.value.id, { ...harborForm })
+    Object.assign(harborForm, { project: '', repository: '', tag: '', version: '', releaseNote: '' })
+    await loadVersions(selectedResource.value.id)
+  } catch (err) {
+    versionError.value = err instanceof Error ? err.message : 'Harbor 同步失败'
+  } finally {
+    harborLoading.value = false
+  }
+}
+
 function formatDate(value?: string) {
   if (!value) {
     return '-'
@@ -269,7 +323,14 @@ function formatDate(value?: string) {
 
       <p v-if="versionError" class="error-message">{{ versionError }}</p>
 
-      <form class="form-grid" @submit.prevent="submitVersion">
+      <div class="tabs">
+        <button :class="['tab', { active: versionTab === 'json' }]" @click="versionTab = 'json'">手动登记</button>
+        <button :class="['tab', { active: versionTab === 'upload' }]" @click="versionTab = 'upload'">文件上传</button>
+        <button :class="['tab', { active: versionTab === 'harbor' }]" @click="versionTab = 'harbor'">Harbor 同步</button>
+      </div>
+
+      <!-- 手动登记 -->
+      <form v-if="versionTab === 'json'" class="form-grid" @submit.prevent="submitVersion">
         <label class="field">
           <span>版本号</span>
           <input v-model.trim="versionForm.version" required maxlength="64" placeholder="1.0.0" />
@@ -305,6 +366,57 @@ function formatDate(value?: string) {
         </div>
       </form>
 
+      <!-- 文件上传 -->
+      <form v-else-if="versionTab === 'upload'" class="form-grid" @submit.prevent="submitUpload">
+        <label class="field">
+          <span>版本号</span>
+          <input v-model.trim="uploadForm.version" required maxlength="64" placeholder="1.0.0" />
+        </label>
+        <label class="field">
+          <span>选择文件</span>
+          <input type="file" @change="onFileChange" />
+        </label>
+        <label class="field field-wide">
+          <span>发布说明</span>
+          <textarea v-model.trim="uploadForm.releaseNote" maxlength="1024" placeholder="版本变更说明" />
+        </label>
+        <div class="form-actions field-wide">
+          <button class="button primary" type="submit" :disabled="uploadLoading">
+            {{ uploadLoading ? '上传中...' : '上传并创建版本' }}
+          </button>
+          <span class="muted" v-if="uploadFile">已选择：{{ uploadFile.name }}</span>
+        </div>
+      </form>
+
+      <!-- Harbor 同步 -->
+      <form v-else class="form-grid" @submit.prevent="submitHarborSync">
+        <label class="field">
+          <span>Harbor 项目</span>
+          <input v-model.trim="harborForm.project" required placeholder="library" />
+        </label>
+        <label class="field">
+          <span>镜像仓库名</span>
+          <input v-model.trim="harborForm.repository" required placeholder="myapp" />
+        </label>
+        <label class="field">
+          <span>标签</span>
+          <input v-model.trim="harborForm.tag" required placeholder="1.0.0" />
+        </label>
+        <label class="field">
+          <span>版本号（选填，默认用标签）</span>
+          <input v-model.trim="harborForm.version" placeholder="1.0.0" />
+        </label>
+        <label class="field field-wide">
+          <span>发布说明</span>
+          <textarea v-model.trim="harborForm.releaseNote" maxlength="1024" placeholder="版本变更说明" />
+        </label>
+        <div class="form-actions field-wide">
+          <button class="button primary" type="submit" :disabled="harborLoading">
+            {{ harborLoading ? '同步中...' : '从 Harbor 同步' }}
+          </button>
+        </div>
+      </form>
+
       <div v-if="versionLoading" class="muted">版本加载中...</div>
       <div v-else-if="versions.length === 0" class="empty-state">当前资源暂无版本。</div>
       <table v-else class="data-table">
@@ -334,3 +446,13 @@ function formatDate(value?: string) {
     </section>
   </section>
 </template>
+
+<style scoped>
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #eee; }
+.tab {
+  padding: 8px 16px; border: none; background: none; cursor: pointer;
+  font-size: 14px; color: #666; border-bottom: 2px solid transparent;
+}
+.tab.active { color: #4361ee; border-bottom-color: #4361ee; font-weight: 600; }
+.tab:hover { color: #4361ee; }
+</style>

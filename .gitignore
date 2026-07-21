@@ -3,6 +3,8 @@ frontend/dist/
 frontend/*.tsbuildinfo
 backend/target/
 backend/src/main/resources/application-local.yml
+backend/data/storage/packages/*.zip
+
 
 # Claude Code 本地会话数据
 .claude/

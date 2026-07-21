@@ -3,6 +3,7 @@ package com.example.delivery.agent;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +26,7 @@ public class AgentController {
     }
 
     @PostMapping("/tasks")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
     public ApiResponse<AgentTaskEntity> createTask(@Valid @RequestBody CreateAgentTaskRequest request) {
         return ApiResponse.ok(agentService.createTask(request));
     }
@@ -35,6 +37,7 @@ public class AgentController {
     }
 
     @PostMapping("/tasks/{taskId}/cancel")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
     public ApiResponse<AgentTaskEntity> cancelTask(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.cancelTask(taskId));
     }
@@ -53,6 +56,7 @@ public class AgentController {
     }
 
     @PostMapping("/tasks/{taskId}/retry")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
     public ApiResponse<AgentTaskEntity> retryTask(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.retryTask(taskId));
     }
@@ -63,6 +67,7 @@ public class AgentController {
     }
 
     @PostMapping("/reports/import")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS','IMPL_ENGINEER')")
     public ApiResponse<AgentExecutionReportEntity> importReport(@Valid @RequestBody ImportAgentReportRequest request) {
         return ApiResponse.ok(agentService.importReport(request.taskId(), request));
     }

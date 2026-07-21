@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, type CreatePackageBuildPayload, type PackageBuild, type PackageDownloadInfo, type PackageManifest } from '../../api/http'
+import { api, type CreatePackageBuildPayload, type ExecutionPlan, type PackageBuild, type PackageDownloadInfo, type PackageManifest } from '../../api/http'
 
 const packages = ref<PackageBuild[]>([])
 const selectedPackageId = ref<number>()
 const manifest = ref<PackageManifest>()
 const downloadInfo = ref<PackageDownloadInfo>()
+const executionPlan = ref<ExecutionPlan>()
 const loading = ref(false)
 const manifestLoading = ref(false)
 const error = ref('')
@@ -117,6 +118,18 @@ async function loadDownloadInfo(packageBuild: PackageBuild) {
   }
 }
 
+async function loadExecutionPlan(packageBuild: PackageBuild) {
+  error.value = ''
+  actionMessage.value = ''
+  executionPlan.value = undefined
+  try {
+    await selectPackage(packageBuild)
+    executionPlan.value = await api.packageExecutionPlan(packageBuild.id)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '执行计划加载失败'
+  }
+}
+
 async function deletePackage(packageBuild: PackageBuild) {
   if (!window.confirm(`确认删除部署包 ${packageBuild.packageCode}？`)) {
     return
@@ -220,6 +233,7 @@ function shortChecksum(value?: string) {
             <button class="link-button" type="button" @click="selectPackage(packageBuild)">查看 manifest</button>
             <button class="link-button" type="button" @click="refreshStatus(packageBuild)">状态</button>
             <button class="link-button" type="button" @click="loadDownloadInfo(packageBuild)">下载信息</button>
+            <button class="link-button" type="button" @click="loadExecutionPlan(packageBuild)">执行计划</button>
             <button class="link-button danger" type="button" @click="deletePackage(packageBuild)">删除</button>
           </td>
         </tr>
@@ -240,6 +254,26 @@ function shortChecksum(value?: string) {
         <br />
         <strong>checksum：</strong>{{ downloadInfo.checksum }}
       </div>
+
+      <div v-if="executionPlan" class="exec-plan">
+        <h3>离线部署执行计划（agent 脚本已同包）</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>#</th><th>步骤编码</th><th>步骤名</th><th>类型</th><th>目标</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="step in executionPlan.steps" :key="step.order">
+              <td>{{ step.order }}</td>
+              <td>{{ step.stepCode }}</td>
+              <td>{{ step.stepName }}</td>
+              <td><span class="badge">{{ step.type }}</span></td>
+              <td>{{ step.target || '-' }}</td>
+              <td class="muted">{{ step.detail }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div v-if="manifestLoading" class="muted">manifest 加载中...</div>
       <template v-else-if="manifest">
         <p class="muted">checksum.sha256：{{ manifest.checksum }}</p>

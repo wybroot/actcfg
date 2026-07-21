@@ -2,8 +2,13 @@ package com.example.delivery.repository;
 
 import com.example.delivery.common.api.ErrorCode;
 import com.example.delivery.common.exception.BusinessException;
+import com.example.delivery.storage.ObjectStorageService;
+import com.example.delivery.storage.StoredObject;
+import java.io.IOException;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,14 +25,17 @@ public class ResourceService {
     private static final String DISABLED = "DISABLED";
 
     private final ResourceRepository resourceRepository;
+    private final ObjectStorageService objectStorageService;
     private final AtomicLong resourceIdSequence = new AtomicLong(1);
     private final AtomicLong versionIdSequence = new AtomicLong(1);
     private final Map<Long, ResourceEntity> resources = new ConcurrentHashMap<>();
     private final Map<Long, ResourceVersionEntity> versions = new ConcurrentHashMap<>();
 
     @Autowired
-    public ResourceService(ObjectProvider<ResourceRepository> resourceRepositoryProvider) {
+    public ResourceService(ObjectProvider<ResourceRepository> resourceRepositoryProvider,
+                           ObjectStorageService objectStorageService) {
         this.resourceRepository = resourceRepositoryProvider.getIfAvailable();
+        this.objectStorageService = objectStorageService;
         if (this.resourceRepository == null) {
             seed();
         }
@@ -35,6 +43,7 @@ public class ResourceService {
 
     public ResourceService() {
         this.resourceRepository = null;
+        this.objectStorageService = null;
         seed();
     }
 
@@ -163,6 +172,57 @@ public class ResourceService {
         );
         versions.put(version.id(), version);
         return version;
+    }
+
+    /**
+     * 上传制品文件并创建资源版本。文件写入对象存储后，externalUrl 记录访问地址，checksum 记录 SHA-256。
+     */
+    @Transactional
+    public ResourceVersionEntity uploadVersion(Long resourceId, String version, String releaseNote,
+                                               String status, byte[] fileBytes, String originalFilename,
+                                               String contentType) {
+        ResourceEntity resource = getResource(resourceId);
+        if (DISABLED.equals(resource.status())) {
+            throw new BusinessException(ErrorCode.STATE_CONFLICT, "资源已禁用，不能新增版本");
+        }
+        if (!StringUtils.hasText(version)) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "版本号不能为空");
+        }
+        if (fileBytes == null || fileBytes.length == 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "上传文件不能为空");
+        }
+        ensureVersionUnique(resourceId, version);
+        if (objectStorageService == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "对象存储不可用");
+        }
+
+        String checksum = sha256Hex(fileBytes);
+        String safeName = originalFilename != null ? originalFilename.replaceAll("[^A-Za-z0-9._-]", "_") : "artifact";
+        String objectName = resource.resourceCode() + "/" + version + "/" + safeName;
+        StoredObject stored = objectStorageService.putResourceFile(
+                objectName, new java.io.ByteArrayInputStream(fileBytes), fileBytes.length, contentType, checksum);
+
+        CreateResourceVersionRequest request = new CreateResourceVersionRequest(
+                version, stored.objectUrl(), null, null, checksum, releaseNote, defaultStatus(status));
+
+        if (useJdbc()) {
+            return resourceRepository.insertVersion(resourceId, request, defaultStatus(status));
+        }
+        ResourceVersionEntity created = new ResourceVersionEntity(
+                versionIdSequence.getAndIncrement(),
+                resourceId, version, stored.objectUrl(), null, null, checksum,
+                releaseNote, defaultStatus(status), LocalDateTime.now());
+        versions.put(created.id(), created);
+        return created;
+    }
+
+    private String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return "sha256:" + HexFormat.of().formatHex(digest.digest(bytes));
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "校验和计算失败");
+        }
     }
 
     public ResourceVersionEntity getVersion(Long versionId) {

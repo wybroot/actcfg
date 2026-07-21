@@ -2,9 +2,14 @@ package com.example.delivery.customer;
 
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,6 +30,7 @@ public class EnvironmentController {
     }
 
     @PutMapping("/{id}/bind-plan")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
     public ApiResponse<CustomerEnvironmentEntity> bindPlan(
             @PathVariable Long id,
             @Valid @RequestBody BindDeployPlanRequest request
@@ -32,8 +38,51 @@ public class EnvironmentController {
         return ApiResponse.ok(customerService.bindDeployPlan(id, request));
     }
 
+    // ---- 环境变量 CRUD ----
+
     @GetMapping("/{id}/variables")
     public ApiResponse<List<EnvVariableEntity>> listVariables(@PathVariable Long id) {
         return ApiResponse.ok(customerService.listVariables(id));
     }
+
+    @PostMapping("/{id}/variables")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    public ApiResponse<EnvVariableEntity> createVariable(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateVariableRequest request
+    ) {
+        return ApiResponse.ok(customerService.createVariable(
+                id, request.key(), request.value(), request.sensitive()));
+    }
+
+    @PutMapping("/{id}/variables/{variableId}")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    public ApiResponse<EnvVariableEntity> updateVariable(
+            @PathVariable Long id,
+            @PathVariable Long variableId,
+            @Valid @RequestBody UpdateVariableRequest request
+    ) {
+        return ApiResponse.ok(customerService.updateVariable(variableId, request.value(), request.sensitive()));
+    }
+
+    @DeleteMapping("/{id}/variables/{variableId}")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    public ApiResponse<Void> deleteVariable(@PathVariable Long id, @PathVariable Long variableId) {
+        customerService.deleteVariable(variableId);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/{id}/variables/clone-from/{fromId}")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    public ApiResponse<List<EnvVariableEntity>> cloneVariables(
+            @PathVariable Long id,
+            @PathVariable Long fromId
+    ) {
+        return ApiResponse.ok(customerService.cloneVariables(fromId, id));
+    }
+
+    // ---- 内部 DTO ----
+    public record CreateVariableRequest(@NotBlank String key, String value, boolean sensitive) {}
+    public record UpdateVariableRequest(@NotNull String value, boolean sensitive) {}
 }
+

@@ -3,11 +3,17 @@ package com.example.delivery.storage;
 import com.example.delivery.common.api.ErrorCode;
 import com.example.delivery.common.exception.BusinessException;
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -39,6 +45,97 @@ public class ObjectStorageService {
         String bucket = storageProperties.minio().buckets().packages();
         putText(bucket, objectName, content, contentType);
         return new StoredObject(bucket, objectName, objectUrl(bucket, objectName), checksum);
+    }
+
+    /**
+     * 上传制品文件（二进制）。MinIO 可用时写入 resources bucket，否则落地到本地 basePath/resources 目录。
+     * 返回的 objectUrl 供资源版本记录 externalUrl 使用。
+     */
+    public StoredObject putResourceFile(String objectName, InputStream stream, long size,
+                                        String contentType, String checksum) {
+        if (!isMinioEnabled()) {
+            return putLocalFile("resources", objectName, stream, checksum);
+        }
+        String bucket = storageProperties.minio().buckets().resources();
+        try {
+            ensureBucket(bucket);
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(objectName)
+                    .contentType(contentType != null ? contentType : "application/octet-stream")
+                    .stream(stream, size, -1)
+                    .build());
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "制品文件上传失败");
+        }
+        return new StoredObject(bucket, objectName, objectUrl(bucket, objectName), checksum);
+    }
+
+    private StoredObject putLocalFile(String subDir, String objectName, InputStream stream, String checksum) {
+        try {
+            String base = storageProperties.basePath() != null ? storageProperties.basePath() : "./data/storage";
+            Path target = Paths.get(base, subDir, objectName);
+            Files.createDirectories(target.getParent());
+            Files.copy(stream, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            String url = "file://" + target.toAbsolutePath().normalize();
+            return new StoredObject("local", objectName, url, checksum);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "制品文件本地写入失败");
+        }
+    }
+
+    /**
+     * 写入部署包压缩档（二进制 ZIP）。MinIO 可用则写 packages bucket，否则落地本地。
+     */
+    public StoredObject putPackageArchive(String objectName, byte[] zipBytes, String checksum) {
+        if (!isMinioEnabled()) {
+            return putLocalFile("packages", objectName,
+                    new ByteArrayInputStream(zipBytes), checksum);
+        }
+        String bucket = storageProperties.minio().buckets().packages();
+        try {
+            ensureBucket(bucket);
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(objectName)
+                    .contentType("application/zip")
+                    .stream(new ByteArrayInputStream(zipBytes), zipBytes.length, -1)
+                    .build());
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "部署包写入失败");
+        }
+        return new StoredObject(bucket, objectName, objectUrl(bucket, objectName), checksum);
+    }
+
+    /**
+     * 按存储 URL 取回对象字节。支持 file:// 本地读取和 MinIO 对象 URL。
+     * 无法识别或取不到（如 internal:// 占位）时返回 null，调用方按引用处理。
+     */
+    public byte[] fetchObjectBytes(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        try {
+            if (url.startsWith("file://")) {
+                Path path = Paths.get(URLDecoder.decode(url.substring("file://".length()), StandardCharsets.UTF_8));
+                return Files.exists(path) ? Files.readAllBytes(path) : null;
+            }
+            if (isMinioEnabled() && url.startsWith(storageProperties.minio().endpoint().replaceAll("/+$", ""))) {
+                // 解析出 bucket/object
+                String rest = url.substring(storageProperties.minio().endpoint().replaceAll("/+$", "").length() + 1);
+                int slash = rest.indexOf('/');
+                if (slash < 0) return null;
+                String bucket = rest.substring(0, slash);
+                String object = rest.substring(slash + 1);
+                try (InputStream in = minioClient.getObject(GetObjectArgs.builder()
+                        .bucket(bucket).object(object).build())) {
+                    return in.readAllBytes();
+                }
+            }
+            return null; // internal:// 等占位地址，无法取回
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void putText(String bucket, String objectName, String content, String contentType) {

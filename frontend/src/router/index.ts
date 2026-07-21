@@ -8,6 +8,7 @@ import PackageBuildListView from '../views/package/PackageBuildListView.vue'
 import OfflineAgentView from '../views/agent/OfflineAgentView.vue'
 import AuditLogView from '../views/audit/AuditLogView.vue'
 import UserListView from '../views/system/UserListView.vue'
+import LoginView from '../views/auth/LoginView.vue'
 
 export const routes = [
   { path: '/', name: 'dashboard', label: '首页工作台', component: DashboardView },
@@ -23,5 +24,21 @@ export const routes = [
 
 export const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes: [
+    ...routes,
+    { path: '/login', name: 'login', component: LoginView, meta: { public: true } }
+  ]
 })
+
+// 路由守卫：未登录跳转 /login
+router.beforeEach((to) => {
+  const token = localStorage.getItem('delivery_token')
+  if (!to.meta.public && !token) {
+    return { name: 'login' }
+  }
+  // 已登录时访问 /login，重定向首页
+  if (to.name === 'login' && token) {
+    return { path: '/' }
+  }
+})
+

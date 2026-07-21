@@ -6,6 +6,16 @@ type ApiResponse<T> = {
   data: T
 }
 
+// ---- Auth 相关类型 ----
+export type LoginPayload = { username: string; password: string }
+export type LoginResult  = { token: string; user: { id: number; username: string; displayName: string; roles: string[] } }
+export type UserVO = { id: number; username: string; displayName: string; status: string; roles: string[]; createdAt: string }
+export type RoleVO = { id: number; roleCode: string; roleName: string; status: string }
+export type CreateUserPayload   = { username: string; displayName: string; password: string }
+export type UpdateUserPayload   = { displayName: string }
+export type AssignRolesPayload  = { roleIds: number[] }
+export type ResetPasswordPayload = { newPassword: string }
+
 export type ResourceType = 'JAR' | 'IMAGE' | 'SQL' | 'SCRIPT' | 'CONFIG' | 'PACKAGE'
 export type ResourceSourceType = 'UPLOAD' | 'HARBOR' | 'NEXUS' | 'MAVEN' | 'INTERNAL_REPO'
 export type ResourceStatus = 'ENABLED' | 'DISABLED'
@@ -100,6 +110,57 @@ export type CustomerEnvironment = {
   status: string
 }
 
+export type Customer = {
+  id: number
+  customerCode: string
+  customerName: string
+  shortName?: string
+  industry?: string
+  status: string
+}
+
+export type EnvVariable = {
+  id: number
+  environmentId: number
+  variableKey: string
+  variableValue: string
+  maskedValue?: string
+  sensitive: boolean
+}
+
+export type CreateCustomerPayload = { customerCode: string; customerName: string; shortName?: string; industry?: string }
+export type UpdateCustomerPayload = { customerName: string; shortName?: string; industry?: string }
+export type CreateVariablePayload = { key: string; value: string; sensitive: boolean }
+export type UpdateVariablePayload = { value: string; sensitive: boolean }
+export type HarborSyncPayload     = { project: string; repository: string; tag: string; version?: string; releaseNote?: string }
+
+export type Snapshot = {
+  id: number
+  customerId: number
+  environmentId: number
+  sourcePlanVersionId: number
+  planName: string
+  versionLabel: string
+  status: string
+  createdAt: string
+}
+
+export type SnapshotComponent = {
+  id: number
+  snapshotId: number
+  componentName: string
+  componentType: string
+  resourceVersionId?: number
+  deployOrder: number
+  configTemplate?: string
+  healthCheck?: string
+}
+
+export type SnapshotDetail = { snapshot: Snapshot; components: SnapshotComponent[] }
+
+export type OperationLog = { id: number; operatorName: string; module: string; action: string; result: string; createdAt: string }
+export type DownloadLog  = { id: number; downloaderName: string; targetType: string; targetName: string; ipAddress: string; createdAt: string }
+
 export type PackageBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
 export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'RETRYING' | 'CANCELED'
 
@@ -130,6 +191,10 @@ export type PackageDownloadInfo = {
   checksum: string
   manifestJson: string
 }
+
+export type DeployStepType = 'CHECK_ENV' | 'COMPAT_CHECK' | 'LOAD_IMAGE' | 'RENDER_CONFIG' | 'DB_INIT' | 'DEPLOY_ARTIFACT' | 'HEALTH_CHECK'
+export type DeployStep = { order: number; stepCode: string; stepName: string; type: DeployStepType; target: string; detail: string }
+export type ExecutionPlan = { packageCode: string; steps: DeployStep[] }
 
 export type CreatePackageBuildPayload = {
   customerId: number
@@ -237,13 +302,22 @@ export type CreateDeployComponentPayload = {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('delivery_token')
   const response = await fetch(`${API_BASE}${url}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...init?.headers
     },
     ...init
   })
+  // 401 → 清 token 并跳登录页
+  if (response.status === 401) {
+    localStorage.removeItem('delivery_token')
+    localStorage.removeItem('delivery_user')
+    window.location.href = '/login'
+    throw new Error('未登录或 Token 失效')
+  }
   const body = (await response.json()) as ApiResponse<T>
   if (!response.ok) {
     throw new Error(body?.message || `Request failed: ${response.status}`)
@@ -299,17 +373,13 @@ export const api = {
     get<DeployComponent[]>(`/api/deploy/plans/versions/${versionId}/components`),
   createDeployComponent: (versionId: number, payload: CreateDeployComponentPayload) =>
     post<DeployComponent>(`/api/deploy/plans/versions/${versionId}/components`, payload),
-  customers: () => get('/api/customers'),
-  customerEnvironments: (customerId: number) => get<CustomerEnvironment[]>(`/api/customers/${customerId}/environments`),
-  environment: (id: number) => get<CustomerEnvironment>(`/api/environments/${id}`),
-  bindEnvironmentDeployPlan: (environmentId: number, payload: BindDeployPlanPayload) =>
-    put<CustomerEnvironment>(`/api/environments/${environmentId}/bind-plan`, payload),
   packages: () => get<PackageBuild[]>('/api/packages'),
   packageBuild: (id: number) => get<PackageBuild>(`/api/packages/${id}`),
   createPackageBuild: (payload: CreatePackageBuildPayload) => post<PackageBuild>('/api/packages/build', payload),
   packageManifest: (id: number) => get<PackageManifest>(`/api/packages/${id}/manifest`),
   packageStatus: (id: number) => get<PackageBuildStatus>(`/api/packages/${id}/status`),
   packageDownloadInfo: (id: number) => get<PackageDownloadInfo>(`/api/packages/${id}/download`),
+  packageExecutionPlan: (id: number) => get<ExecutionPlan>(`/api/packages/${id}/execution-plan`),
   deletePackageBuild: (id: number) => del<void>(`/api/packages/${id}`),
   offlineTasks: () => get<AgentTask[]>('/api/agents/offline/tasks'),
   offlineTask: (id: number) => get<AgentTask>(`/api/agents/offline/tasks/${id}`),
@@ -323,5 +393,65 @@ export const api = {
   importAgentReport: (payload: ImportAgentReportPayload) => post<AgentExecutionReport>('/api/agents/offline/reports/import', payload),
   agentReports: () => get<AgentExecutionReport[]>('/api/agents/offline/reports'),
   agentReport: (taskId: number) => get<AgentExecutionReport>(`/api/agents/offline/tasks/${taskId}/report`),
-  operationLogs: () => get('/api/audit/operation-logs')
+
+  // ---- 审计日志 ----
+  operationLogs: () => get<OperationLog[]>('/api/audit/operation-logs'),
+  downloadLogs:  () => get<DownloadLog[]>('/api/audit/download-logs'),
+
+  // ---- 配置快照 ----
+  environmentSnapshot: (environmentId: number) => get<SnapshotDetail>(`/api/environments/${environmentId}/snapshot`),
+  updateSnapshotComponentConfig: (snapshotId: number, componentId: number, configTemplate: string) =>
+    put<SnapshotComponent>(`/api/snapshots/${snapshotId}/components/${componentId}/config`, { configTemplate }),
+
+  // ---- 认证 ----
+  login:          (payload: LoginPayload) => post<LoginResult>('/api/auth/login', payload),
+  profile:        () => get<LoginResult['user']>('/api/auth/profile'),
+  updateProfile:  (payload: { displayName: string }) => put<LoginResult['user']>('/api/auth/profile', payload),
+  changePassword: (payload: { oldPassword: string; newPassword: string }) =>
+    put<void>('/api/auth/password', payload),
+
+  // ---- 用户管理 ----
+  users:         () => get<UserVO[]>('/api/users'),
+  user:          (id: number) => get<UserVO>(`/api/users/${id}`),
+  createUser:    (payload: CreateUserPayload) => post<UserVO>('/api/users', payload),
+  updateUser:    (id: number, payload: UpdateUserPayload) => put<UserVO>(`/api/users/${id}`, payload),
+  deleteUser:    (id: number) => del<void>(`/api/users/${id}`),
+  assignRoles:   (id: number, payload: AssignRolesPayload) => put<UserVO>(`/api/users/${id}/roles`, payload),
+  resetPassword: (id: number, payload: ResetPasswordPayload) =>
+    put<void>(`/api/users/${id}/password/reset`, payload),
+  roles:         () => get<RoleVO[]>('/api/users/roles'),
+
+  // ---- 客户管理 ----
+  customers:        () => get<Customer[]>('/api/customers'),
+  customer:         (id: number) => get<Customer>(`/api/customers/${id}`),
+  createCustomer:   (payload: CreateCustomerPayload) => post<Customer>('/api/customers', payload),
+  updateCustomer:   (id: number, payload: UpdateCustomerPayload) => put<Customer>(`/api/customers/${id}`, payload),
+  deleteCustomer:   (id: number) => del<void>(`/api/customers/${id}`),
+
+  // ---- 客户环境 ----
+  customerEnvironments:     (customerId: number) => get<CustomerEnvironment[]>(`/api/customers/${customerId}/environments`),
+  environment:              (id: number) => get<CustomerEnvironment>(`/api/environments/${id}`),
+  bindEnvironmentDeployPlan:(environmentId: number, payload: BindDeployPlanPayload) =>
+    put<CustomerEnvironment>(`/api/environments/${environmentId}/bind-plan`, payload),
+
+  // ---- 环境变量 ----
+  envVariables:   (environmentId: number) => get<EnvVariable[]>(`/api/environments/${environmentId}/variables`),
+  createVariable: (environmentId: number, payload: CreateVariablePayload) =>
+    post<EnvVariable>(`/api/environments/${environmentId}/variables`, payload),
+  updateVariable: (environmentId: number, variableId: number, payload: UpdateVariablePayload) =>
+    put<EnvVariable>(`/api/environments/${environmentId}/variables/${variableId}`, payload),
+  deleteVariable: (environmentId: number, variableId: number) =>
+    del<void>(`/api/environments/${environmentId}/variables/${variableId}`),
+  cloneVariables: (toEnvironmentId: number, fromEnvironmentId: number) =>
+    post<EnvVariable[]>(`/api/environments/${toEnvironmentId}/variables/clone-from/${fromEnvironmentId}`, {}),
+
+  // ---- 制品上传 & Harbor 同步 ----
+  uploadResourceVersion: (resourceId: number, formData: FormData) =>
+    request<ResourceVersion>(`/api/repository/resources/${resourceId}/versions/upload`, {
+      method: 'POST',
+      headers: {},   // 让浏览器自动设置 multipart boundary，不传 Content-Type
+      body: formData,
+    }),
+  harborSync: (resourceId: number, payload: HarborSyncPayload) =>
+    post<ResourceVersion>(`/api/repository/resources/${resourceId}/versions/harbor-sync`, payload),
 }
