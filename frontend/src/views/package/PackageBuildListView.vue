@@ -1,6 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, type CreatePackageBuildPayload, type ExecutionPlan, type PackageBuild, type PackageDownloadInfo, type PackageManifest } from '../../api/http'
+import { api, type CreatePackageBuildPayload, type ExecutionPlan, type PackageBuild, type PackageDownloadInfo, type PackageLifecycleState, type PackageManifest } from '../../api/http'
+import { useAuth } from '../../composables/useAuth'
+
+const { hasRole } = useAuth()
+const isSuperAdmin = computed(() => hasRole('SUPER_ADMIN'))
+
+const lifecycleLabels: Record<PackageLifecycleState, string> = {
+  ACTIVE: '活跃',
+  ARCHIVED: '归档',
+  DEPRECATED: '废弃',
+  PURGED: '已清理'
+}
 
 const packages = ref<PackageBuild[]>([])
 const selectedPackageId = ref<number>()
@@ -150,7 +161,49 @@ async function deletePackage(packageBuild: PackageBuild) {
   }
 }
 
-function formatDate(value?: string) {
+async function archivePackage(packageBuild: PackageBuild) {
+  error.value = ''
+  actionMessage.value = ''
+  try {
+    const updated = await api.archivePackage(packageBuild.id)
+    Object.assign(packageBuild, updated)
+    actionMessage.value = `${packageBuild.packageCode} 已归档`
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '归档失败'
+  }
+}
+
+async function deprecatePackage(packageBuild: PackageBuild) {
+  if (!window.confirm(`废弃后 ${packageBuild.packageCode} 将禁止下载，确认？`)) {
+    return
+  }
+  error.value = ''
+  actionMessage.value = ''
+  try {
+    const updated = await api.deprecatePackage(packageBuild.id)
+    Object.assign(packageBuild, updated)
+    actionMessage.value = `${packageBuild.packageCode} 已废弃`
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '废弃失败'
+  }
+}
+
+async function cleanupExpired() {
+  if (!window.confirm('将删除所有“已废弃且过保留期”部署包的物理文件（保留记录），确认清理？')) {
+    return
+  }
+  error.value = ''
+  actionMessage.value = ''
+  try {
+    const purged = await api.cleanupPackages()
+    await loadPackages()
+    actionMessage.value = `清理完成，共清理 ${purged} 个过期部署包`
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '清理失败'
+  }
+}
+
+function formatDate(value?: string | null) {
   if (!value) {
     return '-'
   }
@@ -171,6 +224,7 @@ function shortChecksum(value?: string) {
       </div>
       <div class="toolbar">
         <button class="button secondary" type="button" @click="loadPackages">刷新</button>
+        <button v-if="isSuperAdmin" class="button secondary" type="button" @click="cleanupExpired">清理过期包</button>
         <button class="button primary" type="button" @click="showBuildForm">生成部署包</button>
       </div>
     </div>
@@ -215,6 +269,9 @@ function shortChecksum(value?: string) {
           <th>客户/环境</th>
           <th>方案版本</th>
           <th>状态</th>
+          <th>生命周期</th>
+          <th>下载次数</th>
+          <th>保留至</th>
           <th>Checksum</th>
           <th>创建时间</th>
           <th>操作</th>
@@ -227,6 +284,9 @@ function shortChecksum(value?: string) {
           <td>{{ packageBuild.customerId }} / {{ packageBuild.environmentId }}</td>
           <td>{{ packageBuild.deployPlanVersionId }}</td>
           <td><span class="badge" :class="packageBuild.buildStatus.toLowerCase()">{{ packageBuild.buildStatus }}</span></td>
+          <td><span class="badge" :class="'lc-' + packageBuild.lifecycleState.toLowerCase()">{{ lifecycleLabels[packageBuild.lifecycleState] }}</span></td>
+          <td>{{ packageBuild.downloadCount }}</td>
+          <td>{{ formatDate(packageBuild.retentionUntil) }}</td>
           <td>{{ shortChecksum(packageBuild.checksum) }}</td>
           <td>{{ formatDate(packageBuild.createdAt) }}</td>
           <td class="actions">
@@ -234,6 +294,8 @@ function shortChecksum(value?: string) {
             <button class="link-button" type="button" @click="refreshStatus(packageBuild)">状态</button>
             <button class="link-button" type="button" @click="loadDownloadInfo(packageBuild)">下载信息</button>
             <button class="link-button" type="button" @click="loadExecutionPlan(packageBuild)">执行计划</button>
+            <button v-if="packageBuild.lifecycleState === 'ACTIVE'" class="link-button" type="button" @click="archivePackage(packageBuild)">归档</button>
+            <button v-if="packageBuild.lifecycleState === 'ACTIVE' || packageBuild.lifecycleState === 'ARCHIVED'" class="link-button danger" type="button" @click="deprecatePackage(packageBuild)">废弃</button>
             <button class="link-button danger" type="button" @click="deletePackage(packageBuild)">删除</button>
           </td>
         </tr>

@@ -171,6 +171,7 @@ export type StatsOverview = {
 }
 
 export type PackageBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
+export type PackageLifecycleState = 'ACTIVE' | 'ARCHIVED' | 'DEPRECATED' | 'PURGED'
 export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'RETRYING' | 'CANCELED'
 
 export type PackageBuild = {
@@ -185,6 +186,10 @@ export type PackageBuild = {
   filePath: string
   checksum: string
   createdAt: string
+  lifecycleState: PackageLifecycleState
+  downloadCount: number
+  lastDownloadedAt: string | null
+  retentionUntil: string | null
 }
 
 export type PackageManifest = {
@@ -409,6 +414,9 @@ export const api = {
   packageDownloadInfo: (id: number) => get<PackageDownloadInfo>(`/api/packages/${id}/download`),
   packageExecutionPlan: (id: number) => get<ExecutionPlan>(`/api/packages/${id}/execution-plan`),
   deletePackageBuild: (id: number) => del<void>(`/api/packages/${id}`),
+  archivePackage: (id: number) => put<PackageBuild>(`/api/packages/${id}/archive`, {}),
+  deprecatePackage: (id: number) => put<PackageBuild>(`/api/packages/${id}/deprecate`, {}),
+  cleanupPackages: () => post<number>('/api/packages/cleanup', {}),
   offlineTasks: () => get<AgentTask[]>('/api/agents/offline/tasks'),
   offlineTask: (id: number) => get<AgentTask>(`/api/agents/offline/tasks/${id}`),
   createOfflineTask: (payload: CreateAgentTaskPayload) => post<AgentTask>('/api/agents/offline/tasks', payload),

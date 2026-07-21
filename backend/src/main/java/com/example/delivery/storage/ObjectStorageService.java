@@ -7,6 +7,7 @@ import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URLDecoder;
@@ -135,6 +136,40 @@ public class ObjectStorageService {
             return null; // internal:// 等占位地址，无法取回
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** 部署包保留天数（供生命周期清理使用）。 */
+    public int packageRetentionDays() {
+        return storageProperties.retentionDays();
+    }
+
+    /**
+     * 按存储 URL 删除对象。支持 file:// 本地删除与 MinIO 对象删除。
+     * 文件不存在或占位地址（internal://）视为已删除返回 true；仅在真实删除失败时返回 false。
+     */
+    public boolean deleteObject(String url) {
+        if (url == null || url.isBlank()) {
+            return true;
+        }
+        try {
+            if (url.startsWith("file://")) {
+                Path path = Paths.get(URLDecoder.decode(url.substring("file://".length()), StandardCharsets.UTF_8));
+                Files.deleteIfExists(path);
+                return true;
+            }
+            if (isMinioEnabled() && url.startsWith(storageProperties.minio().endpoint().replaceAll("/+$", ""))) {
+                String rest = url.substring(storageProperties.minio().endpoint().replaceAll("/+$", "").length() + 1);
+                int slash = rest.indexOf('/');
+                if (slash < 0) return true;
+                String bucket = rest.substring(0, slash);
+                String object = rest.substring(slash + 1);
+                minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(object).build());
+                return true;
+            }
+            return true; // internal:// 等占位地址，无物理文件可删
+        } catch (Exception e) {
+            return false;
         }
     }
 

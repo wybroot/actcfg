@@ -125,8 +125,9 @@ public class PackageBuildService {
         String packageCode = "PKG" + LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + String.format("%04d", id);
         LocalDateTime createdAt = LocalDateTime.now();
+        int retentionDays = objectStorageService != null ? objectStorageService.packageRetentionDays() : 90;
         if (useJdbc()) {
-            PackageBuildEntity created = packageBuildRepository.insertPackage(packageCode, request, null, "packages/" + packageCode + ".zip");
+            PackageBuildEntity created = packageBuildRepository.insertPackage(packageCode, request, null, "packages/" + packageCode + ".zip", retentionDays);
             String manifestJson = buildManifestJson(created.id(), packageCode, customer, environment, version, request, created.createdAt());
             StoredObject archive = buildAndStoreArchive(packageCode, manifestJson, environment, version);
             packageBuildRepository.updateArtifacts(created.id(), archive.checksum(), archive.objectUrl());
@@ -146,7 +147,11 @@ public class PackageBuildService {
                 true,
                 archive.objectUrl(),
                 archive.checksum(),
-                createdAt
+                createdAt,
+                PackageLifecycleState.ACTIVE,
+                0L,
+                null,
+                createdAt.plusDays(retentionDays)
         );
         packages.put(id, packageBuild);
         manifests.put(id, new PackageManifest(id, manifestJson, archive.checksum()));
@@ -170,12 +175,18 @@ public class PackageBuildService {
         return getPackage(packageBuildId).buildStatus();
     }
 
+    @Transactional
     public PackageDownloadInfo getDownloadInfo(Long packageBuildId) {
         PackageBuildEntity packageBuild = getPackage(packageBuildId);
         if (packageBuild.buildStatus() != PackageBuildStatus.SUCCESS) {
             throw new BusinessException(ErrorCode.STATE_CONFLICT, "只有生成成功的部署包才能下载");
         }
+        if (!packageBuild.lifecycleState().downloadable()) {
+            throw new BusinessException(ErrorCode.STATE_CONFLICT,
+                    "部署包已" + (packageBuild.lifecycleState() == PackageLifecycleState.PURGED ? "清理" : "废弃") + "，不可下载");
+        }
         PackageManifest manifest = getManifest(packageBuildId);
+        recordDownload(packageBuild);
         return new PackageDownloadInfo(
                 packageBuild.id(),
                 packageBuild.packageCode(),
@@ -183,6 +194,87 @@ public class PackageBuildService {
                 packageBuild.checksum(),
                 manifest.manifestJson()
         );
+    }
+
+    /** 记录一次下载：计数 +1 并刷新最后下载时间。 */
+    private void recordDownload(PackageBuildEntity packageBuild) {
+        if (useJdbc()) {
+            packageBuildRepository.incrementDownload(packageBuild.id());
+            return;
+        }
+        packages.put(packageBuild.id(), packageBuild.withLifecycle(
+                packageBuild.lifecycleState(),
+                packageBuild.downloadCount() + 1,
+                LocalDateTime.now(),
+                packageBuild.retentionUntil()));
+    }
+
+    /** 归档部署包（活跃 → 归档，仍可下载）。 */
+    @Transactional
+    public PackageBuildEntity archivePackage(Long packageBuildId) {
+        return transition(packageBuildId, PackageLifecycleState.ARCHIVED,
+                java.util.Set.of(PackageLifecycleState.ACTIVE));
+    }
+
+    /** 废弃部署包（活跃/归档 → 废弃，禁止下载，等待清理）。 */
+    @Transactional
+    public PackageBuildEntity deprecatePackage(Long packageBuildId) {
+        return transition(packageBuildId, PackageLifecycleState.DEPRECATED,
+                java.util.Set.of(PackageLifecycleState.ACTIVE, PackageLifecycleState.ARCHIVED));
+    }
+
+    private PackageBuildEntity transition(Long packageBuildId, PackageLifecycleState target,
+                                          java.util.Set<PackageLifecycleState> allowedFrom) {
+        PackageBuildEntity pkg = getPackage(packageBuildId);
+        if (pkg.lifecycleState() == target) {
+            return pkg;
+        }
+        if (!allowedFrom.contains(pkg.lifecycleState())) {
+            throw new BusinessException(ErrorCode.STATE_CONFLICT,
+                    "部署包当前状态 " + pkg.lifecycleState() + " 不允许流转到 " + target);
+        }
+        if (useJdbc()) {
+            packageBuildRepository.updateLifecycle(packageBuildId, target);
+            return getPackage(packageBuildId);
+        }
+        PackageBuildEntity updated = pkg.withLifecycle(target, pkg.downloadCount(),
+                pkg.lastDownloadedAt(), pkg.retentionUntil());
+        packages.put(packageBuildId, updated);
+        return updated;
+    }
+
+    /**
+     * 清理过期部署包：所有已废弃且过保留期的包 → 删除物理 zip → 置 PURGED（保留元数据供审计）。
+     * @return 已清理的包数量
+     */
+    @Transactional
+    public int cleanupExpired() {
+        List<PackageBuildEntity> purgeable = findPurgeable();
+        int purged = 0;
+        for (PackageBuildEntity pkg : purgeable) {
+            if (objectStorageService != null) {
+                objectStorageService.deleteObject(pkg.filePath());
+            }
+            if (useJdbc()) {
+                packageBuildRepository.updateLifecycle(pkg.id(), PackageLifecycleState.PURGED);
+            } else {
+                packages.put(pkg.id(), pkg.withLifecycle(PackageLifecycleState.PURGED,
+                        pkg.downloadCount(), pkg.lastDownloadedAt(), pkg.retentionUntil()));
+            }
+            purged++;
+        }
+        return purged;
+    }
+
+    private List<PackageBuildEntity> findPurgeable() {
+        if (useJdbc()) {
+            return packageBuildRepository.findPurgeable();
+        }
+        LocalDateTime now = LocalDateTime.now();
+        return packages.values().stream()
+                .filter(p -> p.lifecycleState() == PackageLifecycleState.DEPRECATED)
+                .filter(p -> p.retentionUntil() != null && p.retentionUntil().isBefore(now))
+                .toList();
     }
 
     @Transactional

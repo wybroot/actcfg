@@ -213,6 +213,22 @@ body {
   color: #1d4ed8;
 }
 
+.badge.lc-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.lc-archived {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge.lc-deprecated,
+.badge.lc-purged {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .code-block {
   background: #111827;
   border-radius: 10px;

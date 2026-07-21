@@ -18,6 +18,10 @@ import org.springframework.stereotype.Repository;
 public class PackageBuildRepository {
     private final JdbcTemplate jdbcTemplate;
 
+    private static final String SELECT_COLUMNS = "id, package_code, customer_id, environment_id, "
+            + "deploy_plan_version_id, package_version, build_status, immutable, file_path, checksum, "
+            + "created_at, lifecycle_state, download_count, last_downloaded_at, retention_until";
+
     private final RowMapper<PackageBuildEntity> packageMapper = (resultSet, rowNum) -> new PackageBuildEntity(
             resultSet.getLong("id"),
             resultSet.getString("package_code"),
@@ -29,7 +33,11 @@ public class PackageBuildRepository {
             resultSet.getBoolean("immutable"),
             resultSet.getString("file_path"),
             resultSet.getString("checksum"),
-            JdbcMapperSupport.nullableDateTime(resultSet, "created_at")
+            JdbcMapperSupport.nullableDateTime(resultSet, "created_at"),
+            PackageLifecycleState.valueOf(resultSet.getString("lifecycle_state")),
+            resultSet.getLong("download_count"),
+            JdbcMapperSupport.nullableDateTime(resultSet, "last_downloaded_at"),
+            JdbcMapperSupport.nullableDateTime(resultSet, "retention_until")
     );
 
     public PackageBuildRepository(JdbcTemplate jdbcTemplate) {
@@ -37,31 +45,50 @@ public class PackageBuildRepository {
     }
 
     public List<PackageBuildEntity> findAll() {
-        return jdbcTemplate.query("""
-                SELECT id, package_code, customer_id, environment_id, deploy_plan_version_id, package_version, build_status, immutable, file_path, checksum, created_at
-                FROM package_build
-                ORDER BY created_at DESC, id DESC
-                """, packageMapper);
+        return jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS + " FROM package_build ORDER BY created_at DESC, id DESC",
+                packageMapper);
     }
 
     public Optional<PackageBuildEntity> findById(Long id) {
         try {
-            return Optional.ofNullable(jdbcTemplate.queryForObject("""
-                    SELECT id, package_code, customer_id, environment_id, deploy_plan_version_id, package_version, build_status, immutable, file_path, checksum, created_at
-                    FROM package_build
-                    WHERE id = ?
-                    """, packageMapper, id));
+            return Optional.ofNullable(jdbcTemplate.queryForObject(
+                    "SELECT " + SELECT_COLUMNS + " FROM package_build WHERE id = ?",
+                    packageMapper, id));
         } catch (EmptyResultDataAccessException exception) {
             return Optional.empty();
         }
     }
 
-    public PackageBuildEntity insertPackage(String packageCode, CreatePackageBuildRequest request, String checksum, String filePath) {
+    /** 更新生命周期状态。 */
+    public void updateLifecycle(Long id, PackageLifecycleState state) {
+        jdbcTemplate.update("UPDATE package_build SET lifecycle_state = ? WHERE id = ?", state.name(), id);
+    }
+
+    /** 记录一次下载：计数 +1 并刷新最后下载时间。 */
+    public void incrementDownload(Long id) {
+        jdbcTemplate.update("""
+                UPDATE package_build
+                SET download_count = download_count + 1, last_downloaded_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """, id);
+    }
+
+    /** 查询可清理的包：已废弃且过保留期。 */
+    public List<PackageBuildEntity> findPurgeable() {
+        return jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS + " FROM package_build "
+                        + "WHERE lifecycle_state = 'DEPRECATED' "
+                        + "AND retention_until IS NOT NULL AND retention_until < CURRENT_TIMESTAMP",
+                packageMapper);
+    }
+
+    public PackageBuildEntity insertPackage(String packageCode, CreatePackageBuildRequest request, String checksum, String filePath, int retentionDays) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
-                    INSERT INTO package_build (package_code, customer_id, environment_id, deploy_plan_version_id, package_version, build_status, immutable, file_path, checksum, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'SUCCESS', 1, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO package_build (package_code, customer_id, environment_id, deploy_plan_version_id, package_version, build_status, immutable, file_path, checksum, created_at, lifecycle_state, download_count, retention_until)
+                    VALUES (?, ?, ?, ?, ?, 'SUCCESS', 1, ?, ?, CURRENT_TIMESTAMP, 'ACTIVE', 0, TIMESTAMPADD(DAY, ?, CURRENT_TIMESTAMP))
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setString(1, packageCode);
             statement.setLong(2, request.customerId());
@@ -70,6 +97,7 @@ public class PackageBuildRepository {
             statement.setString(5, request.packageVersion());
             statement.setString(6, filePath);
             statement.setString(7, checksum);
+            statement.setInt(8, retentionDays);
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();

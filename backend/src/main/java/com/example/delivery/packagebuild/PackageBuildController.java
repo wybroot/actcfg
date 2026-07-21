@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -84,5 +85,26 @@ public class PackageBuildController {
     public ApiResponse<Void> deletePackage(@PathVariable Long id) {
         packageBuildService.deletePackage(id);
         return ApiResponse.ok();
+    }
+
+    @PutMapping("/{id}/archive")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "PACKAGE", action = "ARCHIVE")
+    public ApiResponse<PackageBuildEntity> archivePackage(@PathVariable Long id) {
+        return ApiResponse.ok(packageBuildService.archivePackage(id));
+    }
+
+    @PutMapping("/{id}/deprecate")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "PACKAGE", action = "DEPRECATE")
+    public ApiResponse<PackageBuildEntity> deprecatePackage(@PathVariable Long id) {
+        return ApiResponse.ok(packageBuildService.deprecatePackage(id));
+    }
+
+    @PostMapping("/cleanup")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @AuditLog(module = "PACKAGE", action = "CLEANUP")
+    public ApiResponse<Integer> cleanupExpired() {
+        return ApiResponse.ok(packageBuildService.cleanupExpired());
     }
 }
