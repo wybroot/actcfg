@@ -15,12 +15,14 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Service
 public class AgentService {
     private final PackageBuildService packageBuildService;
     private final AgentRepository agentRepository;
     private final AgentInstanceRepository agentInstanceRepository;
+    private final AgentLogStreamService logStreamService;
     private final AtomicLong taskIdSequence = new AtomicLong(1);
     private final AtomicLong logIdSequence = new AtomicLong(1);
     private final AtomicLong reportIdSequence = new AtomicLong(1);
@@ -38,10 +40,13 @@ public class AgentService {
     @Autowired
     public AgentService(PackageBuildService packageBuildService,
                         ObjectProvider<AgentRepository> agentRepositoryProvider,
-                        ObjectProvider<AgentInstanceRepository> agentInstanceRepositoryProvider) {
+                        ObjectProvider<AgentInstanceRepository> agentInstanceRepositoryProvider,
+                        ObjectProvider<AgentLogStreamService> logStreamServiceProvider) {
         this.packageBuildService = packageBuildService;
         this.agentRepository = agentRepositoryProvider.getIfAvailable();
         this.agentInstanceRepository = agentInstanceRepositoryProvider.getIfAvailable();
+        AgentLogStreamService stream = logStreamServiceProvider.getIfAvailable();
+        this.logStreamService = stream != null ? stream : new AgentLogStreamService();
         if (this.agentRepository == null) {
             seed();
         }
@@ -51,6 +56,7 @@ public class AgentService {
         this.packageBuildService = packageBuildService;
         this.agentRepository = null;
         this.agentInstanceRepository = null;
+        this.logStreamService = new AgentLogStreamService();
         seed();
     }
 
@@ -147,6 +153,7 @@ public class AgentService {
                 agentRepository.findOpenRetryRecord(taskId)
                         .ifPresent(record -> agentRepository.closeRetryRecord(record.id(), request.taskStatus()));
             }
+            publishLog(taskId, request);
             return updated;
         }
         LocalDateTime startedAt = current.startedAt();
@@ -177,7 +184,27 @@ public class AgentService {
         if (isFinished(request.taskStatus())) {
             closeOpenRetryRecord(taskId, request.taskStatus());
         }
+        publishLog(taskId, request);
         return updated;
+    }
+
+    /** 向 SSE 订阅者推送一条实时日志事件。 */
+    private void publishLog(Long taskId, ReportAgentStatusRequest request) {
+        logStreamService.publish(taskId, new AgentLogStreamService.AgentLogEvent(
+                taskId,
+                request.stepCode(),
+                request.stepName(),
+                request.taskStatus().name(),
+                defaultLogLevel(request.logLevel()),
+                request.logContent(),
+                isFinished(request.taskStatus())
+        ));
+    }
+
+    /** 订阅任务日志流（SSE）。 */
+    public SseEmitter streamLogs(Long taskId) {
+        getTask(taskId); // 校验任务存在
+        return logStreamService.subscribe(taskId);
     }
 
     @Transactional

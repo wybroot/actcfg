@@ -4,8 +4,10 @@ import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -56,6 +58,12 @@ public class AgentController {
     @GetMapping("/tasks/{taskId}/logs")
     public ApiResponse<List<AgentExecutionLogEntity>> listExecutionLogs(@PathVariable Long taskId) {
         return ApiResponse.ok(agentService.listExecutionLogs(taskId));
+    }
+
+    /** 实时日志流（SSE）：任务上报状态时推送，供前端实时观看部署进度。 */
+    @GetMapping(value = "/tasks/{taskId}/logs/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamLogs(@PathVariable Long taskId) {
+        return agentService.streamLogs(taskId);
     }
 
     @PostMapping("/tasks/{taskId}/retry")

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   api,
+  API_BASE,
   type AgentExecutionLog,
   type AgentExecutionReport,
   type AgentRetryRecordView,
@@ -168,6 +169,42 @@ async function loadLogs(taskId: number) {
     logLoading.value = false
   }
 }
+
+// ---- 实时日志（SSE）----
+const streaming = ref(false)
+const liveLogs = ref<{ stepCode: string; stepName: string; status: string; logLevel: string; content: string }[]>([])
+let eventSource: EventSource | null = null
+
+function startStream() {
+  if (!selectedTaskId.value) return
+  stopStream()
+  liveLogs.value = []
+  const token = localStorage.getItem('delivery_token') ?? ''
+  const url = `${API_BASE}/api/agents/offline/tasks/${selectedTaskId.value}/logs/stream?token=${encodeURIComponent(token)}`
+  eventSource = new EventSource(url)
+  streaming.value = true
+  eventSource.addEventListener('log', (e) => {
+    try {
+      const evt = JSON.parse((e as MessageEvent).data)
+      liveLogs.value.push({
+        stepCode: evt.stepCode, stepName: evt.stepName, status: evt.status,
+        logLevel: evt.logLevel, content: evt.content
+      })
+      if (evt.finished) stopStream()
+    } catch { /* 忽略解析失败的心跳/连接事件 */ }
+  })
+  eventSource.onerror = () => { stopStream() }
+}
+
+function stopStream() {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+  streaming.value = false
+}
+
+onUnmounted(stopStream)
 
 function showCreateForm() {
   Object.assign(createForm, { packageBuildId: 1, taskType: 'OFFLINE_DEPLOY' })
@@ -438,6 +475,19 @@ function formatDate(value?: string) {
           <h2>{{ selectedTask.taskCode }} 执行日志</h2>
           <p class="muted">{{ selectedTask.taskStatus }} · 部署包 ID：{{ selectedTask.packageBuildId }}</p>
         </div>
+        <div class="toolbar">
+          <button v-if="!streaming" class="button secondary" type="button" @click="startStream">实时日志</button>
+          <button v-else class="button secondary" type="button" @click="stopStream">停止实时（接收中…）</button>
+        </div>
+      </div>
+
+      <div v-if="streaming || liveLogs.length > 0" class="live-log">
+        <div class="live-head">
+          <span class="live-dot" :class="{ on: streaming }"></span>
+          实时推送 {{ streaming ? '进行中' : '已结束' }}（{{ liveLogs.length }} 条）
+        </div>
+        <div v-if="liveLogs.length === 0" class="muted">等待任务上报…</div>
+        <pre v-else class="code-block">{{ liveLogs.map(l => `[${l.status}/${l.logLevel}] ${l.stepCode} ${l.stepName} - ${l.content}`).join('\n') }}</pre>
       </div>
 
       <p v-if="logError" class="error-message">{{ logError }}</p>
