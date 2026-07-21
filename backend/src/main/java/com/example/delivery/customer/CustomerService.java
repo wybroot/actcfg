@@ -115,7 +115,15 @@ public class CustomerService {
         return updated;
     }
 
+    /** 对外读取：敏感变量的明文值一律抹掉，只保留掩码。 */
     public List<EnvVariableEntity> listVariables(Long environmentId) {
+        return listVariablesRaw(environmentId).stream()
+                .map(CustomerService::maskSensitive)
+                .toList();
+    }
+
+    /** 内部读取：保留明文值，仅供克隆等内部操作使用，禁止直接返回给前端。 */
+    private List<EnvVariableEntity> listVariablesRaw(Long environmentId) {
         getEnvironment(environmentId);
         if (useJdbc()) {
             return customerRepository.findVariablesByEnvironmentId(environmentId);
@@ -123,6 +131,15 @@ public class CustomerService {
         return variables.values().stream()
                 .filter(variable -> variable.environmentId().equals(environmentId))
                 .toList();
+    }
+
+    /** 敏感变量对外脱敏：清空明文值，确保掩码存在。 */
+    private static EnvVariableEntity maskSensitive(EnvVariableEntity v) {
+        if (!v.sensitive()) {
+            return v;
+        }
+        String masked = v.maskedValue() != null ? v.maskedValue() : "******";
+        return new EnvVariableEntity(v.id(), v.environmentId(), v.variableKey(), "", masked, true);
     }
 
     // ---- 客户增删改 ----
@@ -212,8 +229,8 @@ public class CustomerService {
     public List<EnvVariableEntity> cloneVariables(Long fromEnvironmentId, Long toEnvironmentId) {
         getEnvironment(fromEnvironmentId);
         getEnvironment(toEnvironmentId);
-        List<EnvVariableEntity> source = listVariables(fromEnvironmentId);
-        List<EnvVariableEntity> existing = listVariables(toEnvironmentId);
+        List<EnvVariableEntity> source = listVariablesRaw(fromEnvironmentId);
+        List<EnvVariableEntity> existing = listVariablesRaw(toEnvironmentId);
         java.util.Set<String> existingKeys = existing.stream()
                 .map(EnvVariableEntity::variableKey).collect(java.util.stream.Collectors.toSet());
         return source.stream()

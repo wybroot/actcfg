@@ -1,6 +1,7 @@
 package com.example.delivery.customer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -58,5 +59,31 @@ class CustomerServiceTests {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> customerService.bindDeployPlan(999L, new BindDeployPlanRequest(1L)));
         assertEquals(ErrorCode.NOT_FOUND, exception.getErrorCode());
+    }
+
+    @Test
+    void sensitiveVariableValueIsMaskedOnRead() {
+        customerService.createVariable(1L, "DB_PASS", "secret123", true);
+
+        EnvVariableEntity masked = customerService.listVariables(1L).stream()
+                .filter(v -> v.variableKey().equals("DB_PASS"))
+                .findFirst().orElseThrow();
+
+        // 对外读取：明文值必须被抹掉，只保留掩码
+        assertEquals("", masked.variableValue());
+        assertNotEquals("secret123", masked.variableValue());
+        assertEquals("******", masked.maskedValue());
+        assertTrue(masked.sensitive());
+    }
+
+    @Test
+    void nonSensitiveVariableKeepsPlainValue() {
+        customerService.createVariable(1L, "DB_HOST", "10.0.0.5", false);
+
+        EnvVariableEntity plain = customerService.listVariables(1L).stream()
+                .filter(v -> v.variableKey().equals("DB_HOST"))
+                .findFirst().orElseThrow();
+
+        assertEquals("10.0.0.5", plain.variableValue());
     }
 }
