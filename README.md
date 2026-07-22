@@ -78,10 +78,44 @@ npm run dev
 5. 配置 Nginx 反向代理 `/api → 8080`
 
 ```bash
-# 构建 + 启动
 cd backend && mvn package -DskipTests
 java -jar target/delivery-platform-0.1.0-SNAPSHOT.jar --spring.profiles.active=local
 ```
+
+---
+
+## Docker 部署（推荐用于快速调试与复杂环境）
+
+`docker/` 目录提供完整的容器化部署方案，支持两种模式：
+
+**模式一：仅依赖服务**（本地调试，后端在 IDE/命令行运行）
+
+```bash
+cd docker/
+cp .env.example .env   # 填写密码
+docker compose -f docker-compose.deps.yml up -d
+# MySQL:3306  Redis:6379  MinIO API:9000  MinIO Console:9001 均在本地可访问
+```
+
+**模式二：全栈一键部署**
+
+```bash
+cd docker/
+cp .env.example .env   # 填写密码和密钥（重要）
+docker compose up -d --build
+# 访问 http://localhost，默认账号 admin / Admin@123
+```
+
+| 文件 | 说明 |
+|---|---|
+| `docker-compose.yml` | 全栈（后端 + 前端 + 全部依赖） |
+| `docker-compose.deps.yml` | 仅依赖（MySQL + Redis + MinIO） |
+| `.env.example` | 环境变量模板（入库），复制为 `.env` 后填写真实值 |
+| `Dockerfile.backend` | 后端多阶段构建 |
+| `Dockerfile.frontend` | 前端多阶段构建（Node + Nginx） |
+| `nginx/default.conf` | Nginx 配置（含 SSE 反代支持） |
+
+详细说明见 [doc/08-部署方案.md § 18](doc/08-部署方案.md)。
 
 ---
 
@@ -111,6 +145,13 @@ actcfg/
 │       ├── composables/useAuth.ts JWT 状态管理
 │       ├── layout/AppLayout.vue
 │       └── views/                 各业务页面
+├── docker/                        容器化部署文件
+│   ├── docker-compose.yml         全栈部署
+│   ├── docker-compose.deps.yml    仅依赖（本地调试用）
+│   ├── .env.example               环境变量模板
+│   ├── Dockerfile.backend
+│   ├── Dockerfile.frontend
+│   └── nginx/default.conf
 ├── doc/                           设计文档（01–10）
 └── README.md
 ```

@@ -7,6 +7,9 @@ backend/data/storage/packages/*.zip
 data/storage/
 backend/data/storage/
 
+# Docker 实际密钥文件（模板 .env.example 入库，实际 .env 不入库）
+docker/.env
+
 
 # Claude Code 本地会话数据
 .claude/
