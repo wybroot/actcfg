@@ -500,3 +500,20 @@ V4 迁移里的 BCrypt hash 与注释密码 `Admin@123` 不匹配（生成时笔
 - Git Bash 里 curl `-d` 包含汉字会乱码，写操作 JSON body 用 `--data-binary @file`
 - 运行 jar 须用 JDK21 路径（系统 PATH 的 java 是 1.8）
 - MinIO bucket 需提前建：`delivery-resources`/`delivery-packages`/`delivery-agent`/`delivery-reports`
+
+### 文档完善 + Docker 部署支持（2750cce → 59a9f64）
+
+**doc/08-部署方案.md 重写**：从162行扩展为600+行，新增完整操作步骤——MySQL/MinIO 初始化命令、`application-local.yml` 完整配置模板（带逐项说明）、Nginx 配置示例、默认账号表、Docker Compose、Agent 离线/在线操作步骤、备份命令（mysqldump + mc）、安全加固清单、常见问题 Q&A（含今天实际踩过的坑）。
+
+**README 重写**：补功能概览表、技术栈实际版本、快速开始3步命令、项目结构目录树、数据库迁移版本说明（V1–V9）、部署包内部结构说明、文档导航表。
+
+**新增 `docker/` 目录**（4579a37）：
+- `docker-compose.yml`：全栈一键部署（后端+前端+MySQL+Redis+MinIO），minio-init 自动创建 Bucket
+- `docker-compose.deps.yml`：仅依赖服务，适合本地调试时单独拉起数据库
+- `.env.example`：环境变量模板（入库），复制为 `.env` 后填写真实值
+- `Dockerfile.backend`：多阶段构建（Maven 3.9 → JRE 21 Alpine，非 root 用户运行）
+- `Dockerfile.frontend`：多阶段构建（Node 20 → Nginx 1.26 Alpine）
+- `nginx/default.conf`：含 Vue history 路由、`/api` 反代、`proxy_buffering off`（支持 SSE 实时日志）
+- `.gitignore` 加入 `docker/.env`
+
+**清理冗余** `sql/` 目录（59a9f64）：原 `sql/init.sql` 只是指向 V1 的四行 SOURCE 占位，实际 SQL 统一由 Flyway 管理，删除消除歧义。
