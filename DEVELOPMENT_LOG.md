@@ -471,3 +471,32 @@ MinIO 冒烟通过：
 - **doc/10 五大阶段 + 在线 Agent 已收官**，本轮完成的是原列为"后续增量"的 P3 能力（生命周期、成功率归因、敏感加密、SSE 实时日志、源仓库前端管理）。
 - 仍可做的增量：真实 agent 客户端二进制、自动回滚、更细数据权限、审计查询筛选、registry 代理形态（平台统一代理拉取再回源）。
 - 尚未做真实业务联调（连真实 MySQL/Redis/MinIO/Harbor 走通），下次可起 local profile 从页面配真实源仓库测连接 + 同步一个真实镜像。所有提交不带共同作者。
+
+## 2026-07-22
+
+### 真实环境联调（local profile）——全部验收项通过
+
+首次连接真实 MySQL + Redis + MinIO 完整 E2E 测试。
+
+**发现并修复 1 个 bug（提交 `870ec85`）：**
+
+V4 迁移里的 BCrypt hash 与注释密码 `Admin@123` 不匹配（生成时笔误）。通过提取 `spring-security-crypto` 用 `BCryptPasswordEncoder.matches` 验证发现。修复：替换正确 hash，密码仍为 `Admin@123`，执行 `mvn flyway:repair` 同步 schema history checksum。
+
+**通过的验收项：**
+
+- Flyway V1–V9 在全新库上全部成功执行，seed 数据就绪
+- 登录 admin/ops/impl/auditor（密码 `Admin@123`）→ JWT 签发，登录日志落库
+- stats/overview + stats/deploy（成功率 + 失败归因）正常返回
+- 资源/客户/部署包 CRUD 走 JDBC 路径
+- RBAC：auditor 写操作返回 403 + 审计日志记录 FAILED
+- **真实建包**：ZIP 写入 MinIO `delivery-packages`，返回真实 SHA-256 + MinIO URL
+- **部署包生命周期**：ACTIVE → ARCHIVED → DEPRECATED（禁止下载 409）全程走通，下载计数落库
+- **敏感变量加密**：DB 存 `enc:v1:...` 密文，接口脱敏，重启后持久密钥可正常处理
+- **源仓库**：新增 + 密码密文入库 + 列表脱敏 + 测试连接接口正常
+- **在线 Agent**：注册→心跳→创建 PENDING 任务→claim（PENDING→RUNNING）→上报 SUCCESS，审计日志完整
+- 重启后无 Flyway checksum 冲突，登录仍正常
+
+**注意事项（留给后续使用）：**
+- Git Bash 里 curl `-d` 包含汉字会乱码，写操作 JSON body 用 `--data-binary @file`
+- 运行 jar 须用 JDK21 路径（系统 PATH 的 java 是 1.8）
+- MinIO bucket 需提前建：`delivery-resources`/`delivery-packages`/`delivery-agent`/`delivery-reports`
