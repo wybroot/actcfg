@@ -6,6 +6,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -35,6 +37,7 @@ public class CustomerRepository {
             resultSet.getLong("id"),
             resultSet.getLong("environment_id"),
             resultSet.getString("variable_key"),
+            resultSet.getString("variable_value"),
             resultSet.getString("masked_value"),
             resultSet.getBoolean("is_sensitive")
     );
@@ -96,10 +99,95 @@ public class CustomerRepository {
 
     public List<EnvVariableEntity> findVariablesByEnvironmentId(Long environmentId) {
         return jdbcTemplate.query("""
-                SELECT id, environment_id, variable_key, masked_value, is_sensitive
+                SELECT id, environment_id, variable_key, variable_value, masked_value, is_sensitive
                 FROM env_variable
                 WHERE environment_id = ?
                 ORDER BY id ASC
                 """, variableMapper, environmentId);
+    }
+
+    public Optional<EnvVariableEntity> findVariableById(Long id) {
+        try {
+            return Optional.ofNullable(jdbcTemplate.queryForObject("""
+                    SELECT id, environment_id, variable_key, variable_value, masked_value, is_sensitive
+                    FROM env_variable WHERE id = ?
+                    """, variableMapper, id));
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** 全部敏感变量（供密钥轮换扫描）。 */
+    public List<EnvVariableEntity> findAllSensitiveVariables() {
+        return jdbcTemplate.query("""
+                SELECT id, environment_id, variable_key, variable_value, masked_value, is_sensitive
+                FROM env_variable
+                WHERE is_sensitive = 1
+                ORDER BY id ASC
+                """, variableMapper);
+    }
+
+    /** 仅更新存储值（密文），用于轮换重新加密，不改动 key/敏感标记。 */
+    public void updateVariableValueRaw(Long id, String storedValue) {
+        jdbcTemplate.update("UPDATE env_variable SET variable_value = ? WHERE id = ?", storedValue, id);
+    }
+
+    // ---- 客户增删改 ----
+
+    public CustomerEntity insertCustomer(String code, String name, String shortName, String industry) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            var ps = con.prepareStatement("""
+                    INSERT INTO customer (customer_code, customer_name, short_name, industry, status, created_at, deleted)
+                    VALUES (?, ?, ?, ?, 'ENABLED', CURRENT_TIMESTAMP, 0)
+                    """, java.sql.Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, code); ps.setString(2, name);
+            ps.setString(3, shortName); ps.setString(4, industry);
+            return ps;
+        }, kh);
+        return findActiveCustomerById(kh.getKey().longValue()).orElseThrow();
+    }
+
+    public CustomerEntity updateCustomer(Long id, String name, String shortName, String industry) {
+        jdbcTemplate.update("""
+                UPDATE customer SET customer_name=?, short_name=?, industry=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND deleted=0
+                """, name, shortName, industry, id);
+        return findActiveCustomerById(id).orElseThrow();
+    }
+
+    public void softDeleteCustomer(Long id) {
+        jdbcTemplate.update("""
+                UPDATE customer SET deleted=1, updated_at=CURRENT_TIMESTAMP WHERE id=?
+                """, id);
+    }
+
+    // ---- 变量增删改 ----
+
+    public EnvVariableEntity insertVariable(Long environmentId, String key, String value, boolean sensitive) {
+        String masked = sensitive ? "******" : null;
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            var ps = con.prepareStatement("""
+                    INSERT INTO env_variable (environment_id, variable_key, variable_value, masked_value, is_sensitive)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, java.sql.Statement.RETURN_GENERATED_KEYS);
+            ps.setLong(1, environmentId); ps.setString(2, key);
+            ps.setString(3, value); ps.setString(4, masked); ps.setBoolean(5, sensitive);
+            return ps;
+        }, kh);
+        return findVariableById(kh.getKey().longValue()).orElseThrow();
+    }
+
+    public EnvVariableEntity updateVariable(Long id, String value, boolean sensitive) {
+        String masked = sensitive ? "******" : null;
+        jdbcTemplate.update("""
+                UPDATE env_variable SET variable_value=?, masked_value=?, is_sensitive=? WHERE id=?
+                """, value, masked, sensitive, id);
+        return findVariableById(id).orElseThrow();
+    }
+
+    public void deleteVariable(Long id) {
+        jdbcTemplate.update("DELETE FROM env_variable WHERE id=?", id);
     }
 }

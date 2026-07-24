@@ -15,24 +15,38 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Service
 public class AgentService {
     private final PackageBuildService packageBuildService;
     private final AgentRepository agentRepository;
+    private final AgentInstanceRepository agentInstanceRepository;
+    private final AgentLogStreamService logStreamService;
     private final AtomicLong taskIdSequence = new AtomicLong(1);
     private final AtomicLong logIdSequence = new AtomicLong(1);
     private final AtomicLong reportIdSequence = new AtomicLong(1);
     private final AtomicLong retryRecordIdSequence = new AtomicLong(1);
+    private final AtomicLong instanceIdSequence = new AtomicLong(1);
     private final Map<Long, AgentTaskEntity> tasks = new ConcurrentHashMap<>();
     private final Map<Long, AgentExecutionLogEntity> logs = new ConcurrentHashMap<>();
     private final Map<Long, AgentExecutionReportEntity> reports = new ConcurrentHashMap<>();
     private final Map<Long, AgentRetryRecordEntity> retryRecords = new ConcurrentHashMap<>();
+    private final Map<String, AgentInstanceEntity> instances = new ConcurrentHashMap<>();
+
+    /** 心跳超时阈值（秒）：超过此时长未心跳则标记离线。 */
+    private static final int HEARTBEAT_TIMEOUT_SECONDS = 90;
 
     @Autowired
-    public AgentService(PackageBuildService packageBuildService, ObjectProvider<AgentRepository> agentRepositoryProvider) {
+    public AgentService(PackageBuildService packageBuildService,
+                        ObjectProvider<AgentRepository> agentRepositoryProvider,
+                        ObjectProvider<AgentInstanceRepository> agentInstanceRepositoryProvider,
+                        ObjectProvider<AgentLogStreamService> logStreamServiceProvider) {
         this.packageBuildService = packageBuildService;
         this.agentRepository = agentRepositoryProvider.getIfAvailable();
+        this.agentInstanceRepository = agentInstanceRepositoryProvider.getIfAvailable();
+        AgentLogStreamService stream = logStreamServiceProvider.getIfAvailable();
+        this.logStreamService = stream != null ? stream : new AgentLogStreamService();
         if (this.agentRepository == null) {
             seed();
         }
@@ -41,6 +55,8 @@ public class AgentService {
     public AgentService(PackageBuildService packageBuildService) {
         this.packageBuildService = packageBuildService;
         this.agentRepository = null;
+        this.agentInstanceRepository = null;
+        this.logStreamService = new AgentLogStreamService();
         seed();
     }
 
@@ -137,6 +153,7 @@ public class AgentService {
                 agentRepository.findOpenRetryRecord(taskId)
                         .ifPresent(record -> agentRepository.closeRetryRecord(record.id(), request.taskStatus()));
             }
+            publishLog(taskId, request);
             return updated;
         }
         LocalDateTime startedAt = current.startedAt();
@@ -167,7 +184,27 @@ public class AgentService {
         if (isFinished(request.taskStatus())) {
             closeOpenRetryRecord(taskId, request.taskStatus());
         }
+        publishLog(taskId, request);
         return updated;
+    }
+
+    /** 向 SSE 订阅者推送一条实时日志事件。 */
+    private void publishLog(Long taskId, ReportAgentStatusRequest request) {
+        logStreamService.publish(taskId, new AgentLogStreamService.AgentLogEvent(
+                taskId,
+                request.stepCode(),
+                request.stepName(),
+                request.taskStatus().name(),
+                defaultLogLevel(request.logLevel()),
+                request.logContent(),
+                isFinished(request.taskStatus())
+        ));
+    }
+
+    /** 订阅任务日志流（SSE）。 */
+    public SseEmitter streamLogs(Long taskId) {
+        getTask(taskId); // 校验任务存在
+        return logStreamService.subscribe(taskId);
     }
 
     @Transactional
@@ -340,6 +377,109 @@ public class AgentService {
                 .filter(log -> log.taskId().equals(taskId))
                 .sorted(Comparator.comparing(AgentExecutionLogEntity::id))
                 .toList();
+    }
+
+    // ==================== 在线 Agent：注册 / 心跳 / 认领 ====================
+
+    /** agent 注册（幂等：按 agentCode 存在则更新为在线）。 */
+    @Transactional
+    public AgentInstanceEntity registerInstance(RegisterAgentRequest request, String ip) {
+        if (useInstanceJdbc()) {
+            return agentInstanceRepository.findByCode(request.agentCode())
+                    .map(existing -> agentInstanceRepository.reRegister(request, ip))
+                    .orElseGet(() -> agentInstanceRepository.insert(request, ip));
+        }
+        AgentInstanceEntity existing = instances.get(request.agentCode());
+        LocalDateTime now = LocalDateTime.now();
+        AgentInstanceEntity instance = new AgentInstanceEntity(
+                existing != null ? existing.id() : instanceIdSequence.getAndIncrement(),
+                request.agentCode(),
+                request.hostname(),
+                ip,
+                request.customerId(),
+                request.environmentId(),
+                "ONLINE",
+                now,
+                existing != null ? existing.registeredAt() : now
+        );
+        instances.put(request.agentCode(), instance);
+        return instance;
+    }
+
+    /** agent 心跳保活。 */
+    public AgentInstanceEntity heartbeat(String agentCode) {
+        if (useInstanceJdbc()) {
+            agentInstanceRepository.heartbeat(agentCode);
+            return agentInstanceRepository.findByCode(agentCode)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Agent 实例未注册"));
+        }
+        AgentInstanceEntity existing = instances.get(agentCode);
+        if (existing == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "Agent 实例未注册");
+        }
+        AgentInstanceEntity updated = new AgentInstanceEntity(
+                existing.id(), existing.agentCode(), existing.hostname(), existing.ipAddress(),
+                existing.customerId(), existing.environmentId(), "ONLINE",
+                LocalDateTime.now(), existing.registeredAt());
+        instances.put(agentCode, updated);
+        return updated;
+    }
+
+    /** 列出所有 agent 实例（先把心跳超时的标记为离线）。 */
+    public List<AgentInstanceEntity> listInstances() {
+        markStaleOffline();
+        if (useInstanceJdbc()) {
+            return agentInstanceRepository.findAll();
+        }
+        return instances.values().stream()
+                .sorted(Comparator.comparing(AgentInstanceEntity::registeredAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .toList();
+    }
+
+    /** 把心跳超时的实例标记为离线。 */
+    public void markStaleOffline() {
+        if (useInstanceJdbc()) {
+            agentInstanceRepository.markStaleOffline(HEARTBEAT_TIMEOUT_SECONDS);
+            return;
+        }
+        LocalDateTime deadline = LocalDateTime.now().minusSeconds(HEARTBEAT_TIMEOUT_SECONDS);
+        instances.forEach((code, ins) -> {
+            if ("ONLINE".equals(ins.instanceStatus()) && ins.lastHeartbeatAt() != null
+                    && ins.lastHeartbeatAt().isBefore(deadline)) {
+                instances.put(code, new AgentInstanceEntity(
+                        ins.id(), ins.agentCode(), ins.hostname(), ins.ipAddress(),
+                        ins.customerId(), ins.environmentId(), "OFFLINE",
+                        ins.lastHeartbeatAt(), ins.registeredAt()));
+            }
+        });
+    }
+
+    /**
+     * 拉模型认领任务：agent 主动拉取一个 PENDING 任务，转为 RUNNING 并返回；无任务返回 null。
+     * 适合私有化/防火墙环境（平台不反连 agent）。
+     */
+    @Transactional
+    public AgentTaskEntity claimNextTask(String agentCode) {
+        heartbeat(agentCode);
+        AgentTaskEntity pending = listOfflineTasks().stream()
+                .filter(t -> t.taskStatus() == AgentTaskStatus.PENDING)
+                .reduce((first, second) -> second) // 取最早创建（列表按时间倒序，末位最早）
+                .orElse(null);
+        if (pending == null) {
+            return null;
+        }
+        return reportStatus(pending.id(), new ReportAgentStatusRequest(
+                AgentTaskStatus.RUNNING,
+                "agent " + agentCode + " 已认领任务",
+                "CLAIM_TASK",
+                "认领任务",
+                "INFO",
+                "claimed by " + agentCode));
+    }
+
+    private boolean useInstanceJdbc() {
+        return agentInstanceRepository != null;
     }
 
     private void seed() {

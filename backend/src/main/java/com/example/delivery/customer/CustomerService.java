@@ -5,6 +5,8 @@ import com.example.delivery.common.exception.BusinessException;
 import com.example.delivery.deploy.DeployPlanService;
 import com.example.delivery.deploy.DeployPlanVersionEntity;
 import com.example.delivery.deploy.DeployPlanVersionStatus;
+import com.example.delivery.security.crypto.SecretCipher;
+import com.example.delivery.snapshot.SnapshotService;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomerService {
     private final DeployPlanService deployPlanService;
     private final CustomerRepository customerRepository;
+    private final SnapshotService snapshotService;
+    private final SecretCipher secretCipher;
     private final AtomicLong customerIdSequence = new AtomicLong(1);
     private final AtomicLong environmentIdSequence = new AtomicLong(1);
     private final AtomicLong variableIdSequence = new AtomicLong(1);
@@ -26,9 +30,15 @@ public class CustomerService {
     private final Map<Long, EnvVariableEntity> variables = new ConcurrentHashMap<>();
 
     @Autowired
-    public CustomerService(DeployPlanService deployPlanService, ObjectProvider<CustomerRepository> customerRepositoryProvider) {
+    public CustomerService(DeployPlanService deployPlanService,
+                           ObjectProvider<CustomerRepository> customerRepositoryProvider,
+                           ObjectProvider<SnapshotService> snapshotServiceProvider,
+                           ObjectProvider<SecretCipher> secretCipherProvider) {
         this.deployPlanService = deployPlanService;
         this.customerRepository = customerRepositoryProvider.getIfAvailable();
+        this.snapshotService = snapshotServiceProvider.getIfAvailable();
+        SecretCipher cipher = secretCipherProvider.getIfAvailable();
+        this.secretCipher = cipher != null ? cipher : new SecretCipher(null);
         if (this.customerRepository == null) {
             seed();
         }
@@ -37,6 +47,8 @@ public class CustomerService {
     public CustomerService(DeployPlanService deployPlanService) {
         this.deployPlanService = deployPlanService;
         this.customerRepository = null;
+        this.snapshotService = null;
+        this.secretCipher = new SecretCipher(null);
         seed();
     }
 
@@ -88,29 +100,215 @@ public class CustomerService {
         if (version.status() != DeployPlanVersionStatus.PUBLISHED) {
             throw new BusinessException(ErrorCode.STATE_CONFLICT, "只能绑定已发布的部署方案版本");
         }
+        CustomerEnvironmentEntity updated;
         if (useJdbc()) {
-            return customerRepository.updateEnvironmentDeployPlanVersion(environmentId, version.id());
+            updated = customerRepository.updateEnvironmentDeployPlanVersion(environmentId, version.id());
+        } else {
+            updated = new CustomerEnvironmentEntity(
+                    current.id(),
+                    current.customerId(),
+                    current.environmentName(),
+                    current.environmentType(),
+                    version.id(),
+                    current.status()
+            );
+            environments.put(environmentId, updated);
         }
-        CustomerEnvironmentEntity updated = new CustomerEnvironmentEntity(
-                current.id(),
-                current.customerId(),
-                current.environmentName(),
-                current.environmentType(),
-                version.id(),
-                current.status()
-        );
-        environments.put(environmentId, updated);
+        // 绑定成功后自动生成独立配置快照（深拷贝方案组件），与源方案解耦
+        if (snapshotService != null) {
+            snapshotService.createSnapshot(updated.customerId(), environmentId, version.id());
+        }
         return updated;
     }
 
+    /** 对外读取：敏感变量的明文值一律抹掉，只保留掩码。 */
     public List<EnvVariableEntity> listVariables(Long environmentId) {
-        getEnvironment(environmentId);
-        if (useJdbc()) {
-            return customerRepository.findVariablesByEnvironmentId(environmentId);
-        }
-        return variables.values().stream()
-                .filter(variable -> variable.environmentId().equals(environmentId))
+        return listVariablesRaw(environmentId).stream()
+                .map(CustomerService::maskSensitive)
                 .toList();
+    }
+
+    /** 内部读取：解密敏感值为明文，仅供克隆/建包等内部操作使用，禁止直接返回给前端。 */
+    private List<EnvVariableEntity> listVariablesRaw(Long environmentId) {
+        getEnvironment(environmentId);
+        List<EnvVariableEntity> stored = useJdbc()
+                ? customerRepository.findVariablesByEnvironmentId(environmentId)
+                : variables.values().stream()
+                        .filter(variable -> variable.environmentId().equals(environmentId))
+                        .toList();
+        return stored.stream().map(this::decryptValue).toList();
+    }
+
+    /** 敏感变量：将存储的密文解密为明文（非敏感或未加密原样返回）。 */
+    private EnvVariableEntity decryptValue(EnvVariableEntity v) {
+        if (!v.sensitive() || !secretCipher.isEncrypted(v.variableValue())) {
+            return v;
+        }
+        return new EnvVariableEntity(v.id(), v.environmentId(), v.variableKey(),
+                secretCipher.decrypt(v.variableValue()), v.maskedValue(), true);
+    }
+
+    /** 敏感变量入库前加密（非敏感原样）。 */
+    private String encryptIfSensitive(String value, boolean sensitive) {
+        return sensitive ? secretCipher.encrypt(value) : value;
+    }
+
+    /** 敏感变量对外脱敏：清空明文值，确保掩码存在。 */
+    private static EnvVariableEntity maskSensitive(EnvVariableEntity v) {
+        if (!v.sensitive()) {
+            return v;
+        }
+        String masked = v.maskedValue() != null ? v.maskedValue() : "******";
+        return new EnvVariableEntity(v.id(), v.environmentId(), v.variableKey(), "", masked, true);
+    }
+
+    // ---- 客户增删改 ----
+
+    @Transactional
+    public CustomerEntity createCustomer(String customerCode, String customerName,
+                                         String shortName, String industry) {
+        if (useJdbc()) {
+            return customerRepository.insertCustomer(customerCode, customerName, shortName, industry);
+        }
+        boolean exists = customers.values().stream()
+                .anyMatch(c -> c.customerCode().equals(customerCode));
+        if (exists) throw new BusinessException(ErrorCode.STATE_CONFLICT, "客户编码已存在");
+        CustomerEntity customer = new CustomerEntity(
+                customerIdSequence.getAndIncrement(), customerCode, customerName, shortName, industry, "ENABLED");
+        customers.put(customer.id(), customer);
+        return customer;
+    }
+
+    @Transactional
+    public CustomerEntity updateCustomer(Long id, String customerName, String shortName, String industry) {
+        getCustomer(id);
+        if (useJdbc()) {
+            return customerRepository.updateCustomer(id, customerName, shortName, industry);
+        }
+        CustomerEntity current = customers.get(id);
+        CustomerEntity updated = new CustomerEntity(
+                current.id(), current.customerCode(), customerName, shortName, industry, current.status());
+        customers.put(id, updated);
+        return updated;
+    }
+
+    @Transactional
+    public void deleteCustomer(Long id) {
+        getCustomer(id);
+        if (useJdbc()) {
+            customerRepository.softDeleteCustomer(id);
+            return;
+        }
+        customers.remove(id);
+    }
+
+    // ---- 环境变量增删改 + 克隆 ----
+
+    @Transactional
+    public EnvVariableEntity createVariable(Long environmentId, String key,
+                                             String value, boolean sensitive) {
+        getEnvironment(environmentId);
+        String storedValue = encryptIfSensitive(value, sensitive);
+        if (useJdbc()) {
+            EnvVariableEntity inserted = customerRepository.insertVariable(environmentId, key, storedValue, sensitive);
+            return decryptValue(inserted);
+        }
+        boolean exists = variables.values().stream()
+                .anyMatch(v -> v.environmentId().equals(environmentId) && v.variableKey().equals(key));
+        if (exists) throw new BusinessException(ErrorCode.STATE_CONFLICT, "变量 key 已存在");
+        String masked = sensitive ? "******" : null;
+        EnvVariableEntity variable = new EnvVariableEntity(
+                variableIdSequence.getAndIncrement(), environmentId, key, storedValue, masked, sensitive);
+        variables.put(variable.id(), variable);
+        return decryptValue(variable);
+    }
+
+    @Transactional
+    public EnvVariableEntity updateVariable(Long variableId, String value, boolean sensitive) {
+        EnvVariableEntity current = getVariable(variableId);
+        String storedValue = encryptIfSensitive(value, sensitive);
+        if (useJdbc()) {
+            EnvVariableEntity updated = customerRepository.updateVariable(variableId, storedValue, sensitive);
+            return decryptValue(updated);
+        }
+        String masked = sensitive ? "******" : null;
+        EnvVariableEntity updated = new EnvVariableEntity(
+                current.id(), current.environmentId(), current.variableKey(), storedValue, masked, sensitive);
+        variables.put(variableId, updated);
+        return decryptValue(updated);
+    }
+
+    @Transactional
+    public void deleteVariable(Long variableId) {
+        getVariable(variableId);
+        if (useJdbc()) {
+            customerRepository.deleteVariable(variableId);
+            return;
+        }
+        variables.remove(variableId);
+    }
+
+    /** 将 fromEnvironmentId 的全部变量克隆到 toEnvironmentId（相同 key 则跳过）。 */
+    @Transactional
+    public List<EnvVariableEntity> cloneVariables(Long fromEnvironmentId, Long toEnvironmentId) {
+        getEnvironment(fromEnvironmentId);
+        getEnvironment(toEnvironmentId);
+        List<EnvVariableEntity> source = listVariablesRaw(fromEnvironmentId);
+        List<EnvVariableEntity> existing = listVariablesRaw(toEnvironmentId);
+        java.util.Set<String> existingKeys = existing.stream()
+                .map(EnvVariableEntity::variableKey).collect(java.util.stream.Collectors.toSet());
+        return source.stream()
+                .filter(v -> !existingKeys.contains(v.variableKey()))
+                .map(v -> createVariable(toEnvironmentId, v.variableKey(), v.variableValue(), v.sensitive()))
+                .toList();
+    }
+
+    /**
+     * 密钥轮换：将所有非活跃密钥加密的敏感变量重新用活跃密钥加密。
+     * 已用活跃密钥或未加密（历史明文，会顺带加密）的按需处理。
+     * @return 重新加密的变量数量
+     */
+    @Transactional
+    public int rotateSecrets() {
+        int rotated = 0;
+        if (useJdbc()) {
+            for (EnvVariableEntity v : customerRepository.findAllSensitiveVariables()) {
+                String next = reencryptForRotation(v.variableValue());
+                if (next != null) {
+                    customerRepository.updateVariableValueRaw(v.id(), next);
+                    rotated++;
+                }
+            }
+            return rotated;
+        }
+        for (EnvVariableEntity v : variables.values()) {
+            if (!v.sensitive()) continue;
+            String next = reencryptForRotation(v.variableValue());
+            if (next != null) {
+                variables.put(v.id(), new EnvVariableEntity(v.id(), v.environmentId(),
+                        v.variableKey(), next, v.maskedValue(), true));
+                rotated++;
+            }
+        }
+        return rotated;
+    }
+
+    /** 返回需要写回的新密文；无需变更返回 null。历史明文一并加密为活跃密钥密文。 */
+    private String reencryptForRotation(String storedValue) {
+        if (secretCipher.isEncrypted(storedValue)) {
+            return secretCipher.rotate(storedValue);
+        }
+        return storedValue == null || storedValue.isEmpty() ? null : secretCipher.encrypt(storedValue);
+    }
+
+    private EnvVariableEntity getVariable(Long variableId) {
+        if (useJdbc()) {
+            return customerRepository.findVariableById(variableId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "变量不存在"));
+        }
+        EnvVariableEntity v = variables.get(variableId);
+        if (v == null) throw new BusinessException(ErrorCode.NOT_FOUND, "变量不存在");
+        return v;
     }
 
     private boolean useJdbc() {
@@ -142,6 +340,7 @@ public class CustomerService {
                 variableIdSequence.getAndIncrement(),
                 environment.id(),
                 "db.password",
+                "",       // variableValue（敏感值留空）
                 "******",
                 true
         );

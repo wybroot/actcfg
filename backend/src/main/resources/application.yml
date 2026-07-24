@@ -3,6 +3,10 @@ spring:
     name: delivery-platform
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 2GB
+      max-request-size: 2GB
 
 server:
   port: 8080
@@ -12,3 +16,14 @@ management:
     web:
       exposure:
         include: health,info
+
+app:
+  jwt:
+    # 生产环境务必通过环境变量 APP_JWT_SECRET 覆盖此默认值
+    secret: "delivery-platform-dev-secret-key-change-in-production-32chars"
+    expiration-hours: 8
+  harbor:
+    # 配置示例（按实际环境填写，不配置则退化为按坐标直接登记）
+    # base-url: https://harbor.example.com
+    # username: admin
+    # password: Harbor12345

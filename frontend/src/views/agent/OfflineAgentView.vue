@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   api,
+  API_BASE,
   type AgentExecutionLog,
   type AgentExecutionReport,
   type AgentRetryRecordView,
@@ -9,13 +10,18 @@ import {
   type AgentTaskStatus,
   type CreateAgentTaskPayload,
   type ImportAgentReportPayload,
-  type ReportAgentStatusPayload
+  type ReportAgentStatusPayload,
+  type AgentInstance,
+  type RegisterAgentPayload
 } from '../../api/http'
 
 const tasks = ref<AgentTask[]>([])
 const logs = ref<AgentExecutionLog[]>([])
 const reports = ref<AgentExecutionReport[]>([])
 const retryRecords = ref<AgentRetryRecordView[]>([])
+const instances = ref<AgentInstance[]>([])
+const instanceError = ref('')
+const registerForm = reactive<RegisterAgentPayload>({ agentCode: '', hostname: '' })
 const selectedTaskId = ref<number>()
 const loading = ref(false)
 const logLoading = ref(false)
@@ -61,7 +67,52 @@ onMounted(() => {
   loadTasks()
   loadReports()
   loadRetryRecords()
+  loadInstances()
 })
+
+async function loadInstances() {
+  instanceError.value = ''
+  try {
+    instances.value = await api.agentInstances()
+  } catch (e: unknown) {
+    instanceError.value = e instanceof Error ? e.message : '在线 Agent 加载失败'
+  }
+}
+
+async function submitRegister() {
+  instanceError.value = ''
+  try {
+    if (!registerForm.agentCode) { instanceError.value = 'agent 编码必填'; return }
+    await api.registerAgent(registerForm)
+    registerForm.agentCode = ''
+    registerForm.hostname = ''
+    await loadInstances()
+  } catch (e: unknown) {
+    instanceError.value = e instanceof Error ? e.message : '注册失败'
+  }
+}
+
+async function claimTask(code: string) {
+  instanceError.value = ''
+  try {
+    const claimed = await api.agentClaimTask(code)
+    await loadInstances()
+    await loadTasks()
+    actionMessage.value = claimed ? `${code} 认领了任务 ${claimed.taskCode}` : `${code} 暂无待认领任务`
+  } catch (e: unknown) {
+    instanceError.value = e instanceof Error ? e.message : '认领失败'
+  }
+}
+
+async function sendHeartbeat(code: string) {
+  instanceError.value = ''
+  try {
+    await api.agentHeartbeat(code)
+    await loadInstances()
+  } catch (e: unknown) {
+    instanceError.value = e instanceof Error ? e.message : '心跳失败'
+  }
+}
 
 async function loadTasks() {
   loading.value = true
@@ -118,6 +169,42 @@ async function loadLogs(taskId: number) {
     logLoading.value = false
   }
 }
+
+// ---- 实时日志（SSE）----
+const streaming = ref(false)
+const liveLogs = ref<{ stepCode: string; stepName: string; status: string; logLevel: string; content: string }[]>([])
+let eventSource: EventSource | null = null
+
+function startStream() {
+  if (!selectedTaskId.value) return
+  stopStream()
+  liveLogs.value = []
+  const token = localStorage.getItem('delivery_token') ?? ''
+  const url = `${API_BASE}/api/agents/offline/tasks/${selectedTaskId.value}/logs/stream?token=${encodeURIComponent(token)}`
+  eventSource = new EventSource(url)
+  streaming.value = true
+  eventSource.addEventListener('log', (e) => {
+    try {
+      const evt = JSON.parse((e as MessageEvent).data)
+      liveLogs.value.push({
+        stepCode: evt.stepCode, stepName: evt.stepName, status: evt.status,
+        logLevel: evt.logLevel, content: evt.content
+      })
+      if (evt.finished) stopStream()
+    } catch { /* 忽略解析失败的心跳/连接事件 */ }
+  })
+  eventSource.onerror = () => { stopStream() }
+}
+
+function stopStream() {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+  streaming.value = false
+}
+
+onUnmounted(stopStream)
 
 function showCreateForm() {
   Object.assign(createForm, { packageBuildId: 1, taskType: 'OFFLINE_DEPLOY' })
@@ -257,6 +344,45 @@ function formatDate(value?: string) {
     <p v-if="error" class="error-message">{{ error }}</p>
     <p v-if="actionMessage" class="success-message">{{ actionMessage }}</p>
 
+    <!-- 在线 Agent 实例 -->
+    <section class="panel stack">
+      <div class="page-header compact">
+        <div>
+          <h2>在线 Agent 实例</h2>
+          <p class="muted">客户现场 agent 注册 + 心跳保活 + 拉模型认领任务（超 90 秒无心跳标记离线）。</p>
+        </div>
+        <button class="button secondary" type="button" @click="loadInstances">刷新</button>
+      </div>
+
+      <p v-if="instanceError" class="error-message">{{ instanceError }}</p>
+
+      <form class="form-inline" @submit.prevent="submitRegister">
+        <input v-model.trim="registerForm.agentCode" placeholder="agent 编码，如 AGENT-01" maxlength="64" />
+        <input v-model.trim="registerForm.hostname" placeholder="主机名（可选）" maxlength="128" />
+        <button class="button primary" type="submit">注册 / 上线</button>
+      </form>
+
+      <div v-if="instances.length === 0" class="empty-state">暂无在线 Agent。</div>
+      <table v-else class="data-table">
+        <thead>
+          <tr><th>编码</th><th>主机名</th><th>IP</th><th>状态</th><th>最近心跳</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="ins in instances" :key="ins.id">
+            <td>{{ ins.agentCode }}</td>
+            <td>{{ ins.hostname || '-' }}</td>
+            <td>{{ ins.ipAddress || '-' }}</td>
+            <td><span class="badge" :class="ins.instanceStatus.toLowerCase()">{{ ins.instanceStatus }}</span></td>
+            <td>{{ formatDate(ins.lastHeartbeatAt) }}</td>
+            <td class="actions">
+              <button class="link-button" type="button" @click="sendHeartbeat(ins.agentCode)">心跳</button>
+              <button class="link-button" type="button" @click="claimTask(ins.agentCode)">认领任务</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <form v-if="createFormVisible" class="panel form-grid" @submit.prevent="submitCreate">
       <label class="field">
         <span>部署包 ID</span>
@@ -349,6 +475,19 @@ function formatDate(value?: string) {
           <h2>{{ selectedTask.taskCode }} 执行日志</h2>
           <p class="muted">{{ selectedTask.taskStatus }} · 部署包 ID：{{ selectedTask.packageBuildId }}</p>
         </div>
+        <div class="toolbar">
+          <button v-if="!streaming" class="button secondary" type="button" @click="startStream">实时日志</button>
+          <button v-else class="button secondary" type="button" @click="stopStream">停止实时（接收中…）</button>
+        </div>
+      </div>
+
+      <div v-if="streaming || liveLogs.length > 0" class="live-log">
+        <div class="live-head">
+          <span class="live-dot" :class="{ on: streaming }"></span>
+          实时推送 {{ streaming ? '进行中' : '已结束' }}（{{ liveLogs.length }} 条）
+        </div>
+        <div v-if="liveLogs.length === 0" class="muted">等待任务上报…</div>
+        <pre v-else class="code-block">{{ liveLogs.map(l => `[${l.status}/${l.logLevel}] ${l.stepCode} ${l.stepName} - ${l.content}`).join('\n') }}</pre>
       </div>
 
       <p v-if="logError" class="error-message">{{ logError }}</p>

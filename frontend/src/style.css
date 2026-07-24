@@ -213,6 +213,55 @@ body {
   color: #1d4ed8;
 }
 
+.badge.lc-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.lc-archived {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge.lc-deprecated,
+.badge.lc-purged {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.live-log {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.live-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.live-dot.on {
+  background: #22c55e;
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .code-block {
   background: #111827;
   border-radius: 10px;

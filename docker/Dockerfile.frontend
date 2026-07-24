@@ -1,0 +1,26 @@
+# 前端多阶段构建
+# Stage 1：Node 编译 Vue 项目
+# Stage 2：Nginx 静态资源服务 + 反向代理
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# 优先安装依赖（利用 layer 缓存）
+COPY frontend/package*.json ./
+RUN npm ci --silent
+
+# 构建
+COPY frontend/ .
+RUN npm run build
+
+# ─────────────────────────────────────────────────────────────
+FROM nginx:1.26-alpine AS runtime
+LABEL maintainer="delivery-platform"
+
+# 前端静态资源
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Nginx 配置（含 /api 反代到后端）
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

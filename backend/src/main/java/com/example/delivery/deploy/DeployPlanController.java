@@ -1,8 +1,10 @@
 package com.example.delivery.deploy;
 
+import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +27,8 @@ public class DeployPlanController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "DEPLOY_PLAN", action = "CREATE")
     public ApiResponse<DeployPlanEntity> createPlan(@Valid @RequestBody CreateDeployPlanRequest request) {
         return ApiResponse.ok(deployPlanService.createPlan(request));
     }
@@ -40,6 +44,8 @@ public class DeployPlanController {
     }
 
     @PostMapping("/{id}/versions")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "DEPLOY_PLAN", action = "CREATE_VERSION")
     public ApiResponse<DeployPlanVersionEntity> createVersion(
             @PathVariable Long id,
             @Valid @RequestBody CreateDeployPlanVersionRequest request
@@ -48,6 +54,8 @@ public class DeployPlanController {
     }
 
     @PostMapping("/versions/{versionId}/publish")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "DEPLOY_PLAN", action = "PUBLISH")
     public ApiResponse<DeployPlanVersionEntity> publishVersion(@PathVariable Long versionId) {
         return ApiResponse.ok(deployPlanService.publishVersion(versionId));
     }
@@ -58,6 +66,8 @@ public class DeployPlanController {
     }
 
     @PostMapping("/versions/{versionId}/components")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "DEPLOY_PLAN", action = "ADD_COMPONENT")
     public ApiResponse<DeployComponentEntity> createComponent(
             @PathVariable Long versionId,
             @Valid @RequestBody CreateDeployComponentRequest request

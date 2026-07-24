@@ -13,6 +13,17 @@ public record PackageBuildEntity(
         boolean immutable,
         String filePath,
         String checksum,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        PackageLifecycleState lifecycleState,
+        long downloadCount,
+        LocalDateTime lastDownloadedAt,
+        LocalDateTime retentionUntil
 ) {
+    /** 复制并覆盖生命周期字段，用于状态流转/下载计数更新。 */
+    public PackageBuildEntity withLifecycle(PackageLifecycleState state, long downloadCount,
+                                            LocalDateTime lastDownloadedAt, LocalDateTime retentionUntil) {
+        return new PackageBuildEntity(id, packageCode, customerId, environmentId, deployPlanVersionId,
+                packageVersion, buildStatus, immutable, filePath, checksum, createdAt,
+                state, downloadCount, lastDownloadedAt, retentionUntil);
+    }
 }

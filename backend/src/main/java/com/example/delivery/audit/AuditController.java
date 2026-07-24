@@ -24,4 +24,9 @@ public class AuditController {
     public ApiResponse<List<DownloadLogEntity>> listDownloadLogs() {
         return ApiResponse.ok(auditService.listDownloadLogs());
     }
+
+    @GetMapping("/login-logs")
+    public ApiResponse<List<LoginLogEntity>> listLoginLogs() {
+        return ApiResponse.ok(auditService.listLoginLogs());
+    }
 }

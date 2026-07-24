@@ -1,0 +1,150 @@
+# 全栈部署：构建后端 + 前端镜像，一键拉起所有服务
+#
+# 用法：
+#   cd docker/
+#   cp .env.example .env        # 填写真实密码和密钥
+#   docker compose up -d --build
+#
+# 访问：http://localhost  默认账号 admin / Admin@123
+# MinIO Console：http://localhost:9001
+
+services:
+  # ── 依赖服务 ──────────────────────────────────────────────────────────────
+
+  mysql:
+    image: mysql:8.0
+    container_name: delivery-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-delivery_platform}
+      MYSQL_USER:          ${MYSQL_USER:-delivery}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: delivery-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: delivery-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9001:9001"   # MinIO Web Console（外部可选访问）
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: delivery-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-admin} ${MINIO_ROOT_PASSWORD} &&
+        mc mb --ignore-existing myminio/delivery-resources &&
+        mc mb --ignore-existing myminio/delivery-packages &&
+        mc mb --ignore-existing myminio/delivery-agent &&
+        mc mb --ignore-existing myminio/delivery-reports &&
+        echo 'MinIO buckets ready.'
+      "
+    restart: "no"
+
+  # ── 后端 API ──────────────────────────────────────────────────────────────
+
+  backend:
+    build:
+      context: ..                      # 构建上下文为项目根目录
+      dockerfile: docker/Dockerfile.backend
+    container_name: delivery-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+
+      # 数据库
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-delivery_platform}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-delivery}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+
+      # Redis
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+      # MinIO
+      APP_STORAGE_TYPE: minio
+      APP_STORAGE_PACKAGE_RETENTION_DAYS: ${APP_PACKAGE_RETENTION_DAYS:-90}
+      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      APP_STORAGE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
+      APP_STORAGE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      APP_STORAGE_MINIO_BUCKETS_RESOURCES: delivery-resources
+      APP_STORAGE_MINIO_BUCKETS_PACKAGES:  delivery-packages
+      APP_STORAGE_MINIO_BUCKETS_AGENTS:    delivery-agent
+      APP_STORAGE_MINIO_BUCKETS_REPORTS:   delivery-reports
+
+      # 安全
+      APP_JWT_SECRET: ${APP_JWT_SECRET}
+      APP_ENCRYPTION_ACTIVE_KEY_ID: v1
+      APP_ENCRYPTION_KEYS_V1: ${APP_ENCRYPTION_KEY_V1}
+
+      # Harbor（可选）
+      APP_HARBOR_BASE_URL:  ${HARBOR_BASE_URL:-}
+      APP_HARBOR_USERNAME:  ${HARBOR_USERNAME:-}
+      APP_HARBOR_PASSWORD:  ${HARBOR_PASSWORD:-}
+
+      # JVM 参数
+      JAVA_OPTS: "-Xms512m -Xmx1g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── 前端 + Nginx ─────────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: delivery-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:

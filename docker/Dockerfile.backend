@@ -1,0 +1,31 @@
+# 后端多阶段构建
+# Stage 1：Maven 编译打包
+# Stage 2：精简 JRE 运行镜像
+
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
+WORKDIR /build
+
+# 优先复制 pom.xml 利用 Docker layer 缓存依赖
+COPY backend/pom.xml ./
+RUN mvn dependency:go-offline -q
+
+# 复制源码并构建（跳过测试，测试在 CI 中单独跑）
+COPY backend/src ./src
+RUN mvn package -DskipTests -q
+
+# ─────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre-alpine AS runtime
+LABEL maintainer="delivery-platform"
+
+WORKDIR /app
+
+# 非 root 用户运行，提升安全性
+RUN addgroup -S delivery && adduser -S delivery -G delivery
+USER delivery
+
+COPY --from=builder /build/target/delivery-platform-0.1.0-SNAPSHOT.jar app.jar
+
+EXPOSE 8080
+
+# JAVA_OPTS 可在 docker-compose 中通过环境变量覆盖
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
