@@ -4,6 +4,7 @@ import com.example.delivery.audit.AuditLog;
 import com.example.delivery.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -65,6 +66,15 @@ public class CustomerController {
         return ApiResponse.ok(customerService.listEnvironments(id));
     }
 
+    @PostMapping("/{id}/environments")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','OPS')")
+    @AuditLog(module = "CUSTOMER", action = "CREATE_ENV")
+    public ApiResponse<CustomerEnvironmentEntity> createEnvironment(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateEnvironmentRequest req) {
+        return ApiResponse.ok(customerService.createEnvironment(id, req.environmentName(), req.environmentType()));
+    }
+
     @GetMapping("/environments/{environmentId}/variables")
     public ApiResponse<List<EnvVariableEntity>> listVariables(@PathVariable Long environmentId) {
         return ApiResponse.ok(customerService.listVariables(environmentId));
@@ -81,5 +91,9 @@ public class CustomerController {
             @NotBlank String customerName,
             String shortName,
             String industry) {}
+
+    public record CreateEnvironmentRequest(
+            @NotBlank String environmentName,
+            @NotNull EnvironmentType environmentType) {}
 }
 
