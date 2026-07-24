@@ -17,7 +17,7 @@ async function loadCustomers() {
   }
 }
 
-watch(selectedCustomerId, (id) => { if (id) loadEnvironments(id) })
+watch(selectedCustomerId, (id) => { selectedEnvironmentId.value = undefined; if (id) loadEnvironments(id) })
 
 // ---- 环境列表 ----
 const environments = ref<CustomerEnvironment[]>([])
