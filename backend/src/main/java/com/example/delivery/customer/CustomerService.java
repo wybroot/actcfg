@@ -81,6 +81,17 @@ public class CustomerService {
                 .toList();
     }
 
+    public CustomerEnvironmentEntity createEnvironment(Long customerId, String name, EnvironmentType type) {
+        getCustomer(customerId);
+        if (useJdbc()) {
+            return customerRepository.insertEnvironment(customerId, name, type);
+        }
+        long id = environmentIdSequence.getAndIncrement();
+        CustomerEnvironmentEntity env = new CustomerEnvironmentEntity(id, customerId, name, type, null, "ENABLED");
+        environments.put(id, env);
+        return env;
+    }
+
     public CustomerEnvironmentEntity getEnvironment(Long environmentId) {
         if (useJdbc()) {
             return customerRepository.findEnvironmentById(environmentId)

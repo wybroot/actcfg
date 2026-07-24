@@ -160,6 +160,26 @@ async function rotateSecrets() {
   } catch (e: unknown) { alert(e instanceof Error ? e.message : '轮换失败') }
 }
 
+// ---- 新增环境 ----
+const createEnvDialog = ref({ show: false, loading: false, error: '',
+  form: { environmentName: '', environmentType: 'PROD' } })
+
+function openCreateEnv() {
+  createEnvDialog.value = { show: true, loading: false, error: '',
+    form: { environmentName: '', environmentType: 'PROD' } }
+}
+
+async function submitCreateEnv() {
+  createEnvDialog.value.loading = true; createEnvDialog.value.error = ''
+  try {
+    await api.createEnvironment(selectedCustomerId.value!, createEnvDialog.value.form)
+    createEnvDialog.value.show = false
+    await loadEnvironments(selectedCustomerId.value!)
+  } catch (e: unknown) {
+    createEnvDialog.value.error = e instanceof Error ? e.message : '创建失败'
+  } finally { createEnvDialog.value.loading = false }
+}
+
 onMounted(loadCustomers)
 </script>
 
@@ -175,6 +195,7 @@ onMounted(loadCustomers)
           <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.customerName }}</option>
         </select>
         <button class="button secondary" @click="selectedCustomerId && loadEnvironments(selectedCustomerId)">刷新</button>
+        <button v-if="selectedCustomerId" class="button primary" @click="openCreateEnv">+ 新增环境</button>
       </div>
     </div>
 
@@ -291,6 +312,33 @@ onMounted(loadCustomers)
         </tbody>
       </table>
     </section>
+
+    <!-- 新增环境弹窗 -->
+    <div v-if="createEnvDialog.show" class="modal-overlay" @click.self="createEnvDialog.show = false">
+      <div class="modal">
+        <h3>新增环境</h3>
+        <div class="field">
+          <label>环境名称</label>
+          <input v-model="createEnvDialog.form.environmentName" placeholder="如：生产环境" />
+        </div>
+        <div class="field">
+          <label>环境类型</label>
+          <select v-model="createEnvDialog.form.environmentType" class="select-input" style="width:100%">
+            <option value="DEV">DEV</option>
+            <option value="TEST">TEST</option>
+            <option value="PROD">PROD</option>
+            <option value="DR">DR</option>
+          </select>
+        </div>
+        <p v-if="createEnvDialog.error" class="error">{{ createEnvDialog.error }}</p>
+        <div class="modal-footer">
+          <button @click="createEnvDialog.show = false">取消</button>
+          <button class="btn-primary" @click="submitCreateEnv" :disabled="createEnvDialog.loading">
+            {{ createEnvDialog.loading ? '创建中...' : '创 建' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- 变量新增/编辑弹窗 -->
     <div v-if="varDialog.show" class="modal-overlay" @click.self="varDialog.show = false">

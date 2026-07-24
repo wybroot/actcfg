@@ -162,6 +162,21 @@ public class CustomerRepository {
                 """, id);
     }
 
+    // ---- 环境增删改 ----
+
+    public CustomerEnvironmentEntity insertEnvironment(Long customerId, String name, EnvironmentType type) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            var ps = con.prepareStatement("""
+                    INSERT INTO customer_environment (customer_id, environment_name, environment_type, status, created_at)
+                    VALUES (?, ?, ?, 'ENABLED', CURRENT_TIMESTAMP)
+                    """, java.sql.Statement.RETURN_GENERATED_KEYS);
+            ps.setLong(1, customerId); ps.setString(2, name); ps.setString(3, type.name());
+            return ps;
+        }, kh);
+        return findEnvironmentById(kh.getKey().longValue()).orElseThrow();
+    }
+
     // ---- 变量增删改 ----
 
     public EnvVariableEntity insertVariable(Long environmentId, String key, String value, boolean sensitive) {

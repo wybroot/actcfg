@@ -528,6 +528,8 @@ export const api = {
 
   // ---- 客户环境 ----
   customerEnvironments:     (customerId: number) => get<CustomerEnvironment[]>(`/api/customers/${customerId}/environments`),
+  createEnvironment:        (customerId: number, payload: { environmentName: string; environmentType: string }) =>
+    post<CustomerEnvironment>(`/api/customers/${customerId}/environments`, payload),
   environment:              (id: number) => get<CustomerEnvironment>(`/api/environments/${id}`),
   bindEnvironmentDeployPlan:(environmentId: number, payload: BindDeployPlanPayload) =>
     put<CustomerEnvironment>(`/api/environments/${environmentId}/bind-plan`, payload),
